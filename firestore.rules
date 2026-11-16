@@ -1,0 +1,213 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global safety net: default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isWorkspaceUser(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isCloudOwner() {
+      return isSignedIn() &&
+             request.auth.token.email_verified == true &&
+             request.auth.token.email in ['sanskar7775@gmail.com', 'sanskarghogare076@gmail.com'];
+    }
+
+    function isValidTimestamp(ts) {
+      return ts is timestamp && ts <= request.time;
+    }
+
+    function isValidUserProfile(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.ownerName is string && data.ownerName.size() >= 1 && data.ownerName.size() <= 60 &&
+             data.aiName is string && data.aiName.size() >= 1 && data.aiName.size() <= 40 &&
+             data.websiteTitle is string && data.websiteTitle.size() >= 1 && data.websiteTitle.size() <= 100 &&
+             (!('websiteTagline' in data) || (data.websiteTagline is string && data.websiteTagline.size() <= 200)) &&
+             (!('keyFingerprint' in data) || (data.keyFingerprint is string && data.keyFingerprint.size() <= 128)) &&
+             data.voiceReplyEnabled is bool &&
+             data.autoSetupCompleted is bool;
+    }
+
+    function isValidEncryptedRecord(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.recordType in ['chat', 'note', 'tool_output', 'dashboard_pin'] &&
+             data.ciphertext is string && data.ciphertext.size() >= 1 && data.ciphertext.size() <= 65536 &&
+             data.iv is string && data.iv.size() >= 8 && data.iv.size() <= 64 &&
+             data.keyVersion is int && data.keyVersion >= 1 && data.keyVersion <= 1000 &&
+             data.pinned is bool;
+    }
+
+    function isValidPersonalWebsite(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.ownerTag is string && data.ownerTag.size() >= 1 && data.ownerTag.size() <= 80 &&
+             data.siteTitle is string && data.siteTitle.size() >= 1 && data.siteTitle.size() <= 100 &&
+             data.headline is string && data.headline.size() >= 1 && data.headline.size() <= 160 &&
+             (!('bio' in data) || (data.bio is string && data.bio.size() <= 1000)) &&
+             data.accentStyle in ['cyber_cyan', 'obsidian_gold', 'aurora_violet'] &&
+             data.showTelemetry is bool &&
+             data.showAiPortal is bool &&
+             (!('publishedHtml' in data) || (data.publishedHtml is string && data.publishedHtml.size() <= 100000));
+    }
+
+    function isValidVaultBundle(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.saltBase64 is string && data.saltBase64.size() >= 8 && data.saltBase64.size() <= 128 &&
+             data.wrappedKeyBase64 is string && data.wrappedKeyBase64.size() >= 16 && data.wrappedKeyBase64.size() <= 512 &&
+             data.ivBase64 is string && data.ivBase64.size() >= 8 && data.ivBase64.size() <= 64 &&
+             data.keyFingerprint is string && data.keyFingerprint.size() >= 4 && data.keyFingerprint.size() <= 128;
+    }
+
+    // Owner-visible directory of users (usernames & counts)
+    match /user_directory/{userId} {
+      allow get: if isWorkspaceUser(userId) || isCloudOwner();
+      allow list: if isCloudOwner();
+
+      allow create, update: if isWorkspaceUser(userId) &&
+                               isValidId(userId) &&
+                               incoming().userId == request.auth.uid &&
+                               incoming().username is string &&
+                               incoming().username.size() >= 1 &&
+                               incoming().username.size() <= 64 &&
+                               incoming().authMethod is string &&
+                               incoming().activityCount is int &&
+                               incoming().activityCount >= 0 &&
+                               isValidTimestamp(incoming().lastActiveAt);
+
+      allow delete: if isCloudOwner();
+    }
+
+    // Owner-visible user activity telemetry feed
+    match /user_activities/{activityId} {
+      allow get, list: if isCloudOwner();
+
+      allow create: if isSignedIn() &&
+                       isValidId(activityId) &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().username is string &&
+                       incoming().username.size() >= 1 &&
+                       incoming().username.size() <= 64 &&
+                       incoming().actionType is string &&
+                       incoming().summary is string &&
+                       incoming().summary.size() <= 256 &&
+                       isValidTimestamp(incoming().timestamp);
+
+      allow update, delete: if isCloudOwner();
+    }
+
+    match /users/{userId} {
+      allow get: if isWorkspaceUser(userId) && isValidId(userId);
+      allow list: if isWorkspaceUser(userId);
+
+      allow create: if isWorkspaceUser(userId) &&
+                       isValidId(userId) &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().keys().hasAll(['userId', 'ownerName', 'aiName', 'websiteTitle', 'voiceReplyEnabled', 'autoSetupCompleted', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'ownerName', 'aiName', 'websiteTitle', 'websiteTagline', 'keyFingerprint', 'voiceReplyEnabled', 'autoSetupCompleted', 'createdAt', 'updatedAt']) &&
+                       isValidTimestamp(incoming().createdAt) &&
+                       isValidTimestamp(incoming().updatedAt) &&
+                       isValidUserProfile(incoming());
+
+      allow update: if isWorkspaceUser(userId) &&
+                       isValidId(userId) &&
+                       isValidUserProfile(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       isValidTimestamp(incoming().updatedAt) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['ownerName', 'aiName', 'websiteTitle', 'websiteTagline', 'keyFingerprint', 'voiceReplyEnabled', 'autoSetupCompleted', 'updatedAt']);
+
+      allow delete: if isWorkspaceUser(userId) && isValidId(userId);
+
+      match /encrypted_records/{recordId} {
+        allow get: if isWorkspaceUser(userId) && isValidId(recordId);
+        allow list: if isWorkspaceUser(userId);
+
+        allow create: if isWorkspaceUser(userId) &&
+                         isValidId(recordId) &&
+                         incoming().userId == request.auth.uid &&
+                         incoming().keys().hasAll(['userId', 'recordType', 'ciphertext', 'iv', 'keyVersion', 'pinned', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['userId', 'recordType', 'ciphertext', 'iv', 'keyVersion', 'pinned', 'createdAt', 'updatedAt']) &&
+                         isValidTimestamp(incoming().createdAt) &&
+                         isValidTimestamp(incoming().updatedAt) &&
+                         isValidEncryptedRecord(incoming());
+
+        allow update: if isWorkspaceUser(userId) &&
+                         isValidId(recordId) &&
+                         isValidEncryptedRecord(incoming()) &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         isValidTimestamp(incoming().updatedAt) &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['recordType', 'ciphertext', 'iv', 'keyVersion', 'pinned', 'updatedAt']);
+
+        allow delete: if isWorkspaceUser(userId) && isValidId(recordId);
+      }
+
+      match /website_pages/{pageId} {
+        allow get: if isWorkspaceUser(userId) && isValidId(pageId);
+        allow list: if isWorkspaceUser(userId);
+
+        allow create: if isWorkspaceUser(userId) &&
+                         isValidId(pageId) &&
+                         incoming().userId == request.auth.uid &&
+                         incoming().keys().hasAll(['userId', 'ownerTag', 'siteTitle', 'headline', 'accentStyle', 'showTelemetry', 'showAiPortal', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['userId', 'ownerTag', 'siteTitle', 'headline', 'bio', 'accentStyle', 'showTelemetry', 'showAiPortal', 'publishedHtml', 'createdAt', 'updatedAt']) &&
+                         isValidTimestamp(incoming().createdAt) &&
+                         isValidTimestamp(incoming().updatedAt) &&
+                         isValidPersonalWebsite(incoming());
+
+        allow update: if isWorkspaceUser(userId) &&
+                         isValidId(pageId) &&
+                         isValidPersonalWebsite(incoming()) &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         isValidTimestamp(incoming().updatedAt) &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['ownerTag', 'siteTitle', 'headline', 'bio', 'accentStyle', 'showTelemetry', 'showAiPortal', 'publishedHtml', 'updatedAt']);
+
+        allow delete: if isWorkspaceUser(userId) && isValidId(pageId);
+      }
+
+      match /vault_bundles/{bundleId} {
+        allow get: if isWorkspaceUser(userId) && isValidId(bundleId);
+        allow list: if isWorkspaceUser(userId);
+
+        allow create: if isWorkspaceUser(userId) &&
+                         isValidId(bundleId) &&
+                         incoming().userId == request.auth.uid &&
+                         incoming().keys().hasAll(['userId', 'saltBase64', 'wrappedKeyBase64', 'ivBase64', 'keyFingerprint', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['userId', 'saltBase64', 'wrappedKeyBase64', 'ivBase64', 'keyFingerprint', 'createdAt', 'updatedAt']) &&
+                         isValidTimestamp(incoming().createdAt) &&
+                         isValidTimestamp(incoming().updatedAt) &&
+                         isValidVaultBundle(incoming());
+
+        allow update: if isWorkspaceUser(userId) &&
+                         isValidId(bundleId) &&
+                         isValidVaultBundle(incoming()) &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         isValidTimestamp(incoming().updatedAt) &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['saltBase64', 'wrappedKeyBase64', 'ivBase64', 'keyFingerprint', 'updatedAt']);
+
+        allow delete: if isWorkspaceUser(userId) && isValidId(bundleId);
+      }
+    }
+  }
+}

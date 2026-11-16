@@ -1,0 +1,6 @@
+{
+  "name": "New Era",
+  "description": "New Era AI — Personal voice-enabled AI command center owned by Sanskar, featuring internet access, phone & app control, owner-tagged personal website & dashboard, full AI tool suite, and end-to-end encrypted cross-device sync.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

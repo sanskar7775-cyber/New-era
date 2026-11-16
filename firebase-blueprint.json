@@ -1,0 +1,90 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Owner profile and New Era AI configuration synced across devices.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Authenticated Firebase UID" },
+        "ownerName": { "type": "string", "description": "Owner display name (e.g., Sanskar)" },
+        "aiName": { "type": "string", "description": "Custom AI assistant name (e.g., New Era)" },
+        "websiteTitle": { "type": "string", "description": "Personal website title" },
+        "websiteTagline": { "type": "string", "description": "Personal website subtitle" },
+        "keyFingerprint": { "type": "string", "description": "SHA-256 fingerprint of active E2EE vault key" },
+        "voiceReplyEnabled": { "type": "boolean", "description": "Whether Alexa-style TTS voice replies are active" },
+        "autoSetupCompleted": { "type": "boolean", "description": "Whether automated initial setup finished" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp on creation" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp on update" }
+      },
+      "required": ["userId", "ownerName", "aiName", "websiteTitle", "voiceReplyEnabled", "autoSetupCompleted", "createdAt", "updatedAt"]
+    },
+    "EncryptedRecord": {
+      "title": "EncryptedRecord",
+      "description": "End-to-end encrypted AES-256-GCM record for chats, notes, AI tool outputs, and pinned dashboard widgets.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Owner Firebase UID" },
+        "recordType": { "type": "string", "enum": ["chat", "note", "tool_output", "dashboard_pin"], "description": "Type of encrypted payload" },
+        "ciphertext": { "type": "string", "description": "Base64 AES-256-GCM encrypted JSON payload" },
+        "iv": { "type": "string", "description": "Base64 12-byte initialization vector" },
+        "keyVersion": { "type": "integer", "description": "Key rotation version" },
+        "pinned": { "type": "boolean", "description": "Whether pinned to personal dashboard" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server creation timestamp" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server update timestamp" }
+      },
+      "required": ["userId", "recordType", "ciphertext", "iv", "keyVersion", "pinned", "createdAt", "updatedAt"]
+    },
+    "PersonalWebsite": {
+      "title": "PersonalWebsite",
+      "description": "Owner-tagged personal website and dashboard portal configuration.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Owner Firebase UID" },
+        "ownerTag": { "type": "string", "description": "Mandatory owner attribution tag (Owner: Sanskar)" },
+        "siteTitle": { "type": "string", "description": "Website title" },
+        "headline": { "type": "string", "description": "Hero headline" },
+        "bio": { "type": "string", "description": "Personal bio" },
+        "accentStyle": { "type": "string", "enum": ["cyber_cyan", "obsidian_gold", "aurora_violet"], "description": "Website visual theme" },
+        "showTelemetry": { "type": "boolean", "description": "Display live device status on site" },
+        "showAiPortal": { "type": "boolean", "description": "Display AI tools section on site" },
+        "publishedHtml": { "type": "string", "description": "Generated HTML5 document for local server and export" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server creation timestamp" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server update timestamp" }
+      },
+      "required": ["userId", "ownerTag", "siteTitle", "headline", "accentStyle", "showTelemetry", "showAiPortal", "createdAt", "updatedAt"]
+    },
+    "VaultBundle": {
+      "title": "VaultBundle",
+      "description": "PBKDF2 passphrase-wrapped E2EE master key for seamless cross-device decryption.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Owner Firebase UID" },
+        "saltBase64": { "type": "string", "description": "PBKDF2 random salt in Base64" },
+        "wrappedKeyBase64": { "type": "string", "description": "Encrypted AES-256 master key in Base64" },
+        "ivBase64": { "type": "string", "description": "AES-GCM IV used to wrap the key" },
+        "keyFingerprint": { "type": "string", "description": "SHA-256 fingerprint of unwrapped master key" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server creation timestamp" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server update timestamp" }
+      },
+      "required": ["userId", "saltBase64", "wrappedKeyBase64", "ivBase64", "keyFingerprint", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Owner profile and AI preferences"
+    },
+    "/users/{userId}/encrypted_records/{recordId}": {
+      "schema": { "$ref": "#/entities/EncryptedRecord" },
+      "description": "End-to-end encrypted cross-device synced records"
+    },
+    "/users/{userId}/website_pages/{pageId}": {
+      "schema": { "$ref": "#/entities/PersonalWebsite" },
+      "description": "Owner-tagged personal website configuration and HTML snapshot"
+    },
+    "/users/{userId}/vault_bundles/{bundleId}": {
+      "schema": { "$ref": "#/entities/VaultBundle" },
+      "description": "Wrapped E2EE master key bundle for multi-device sync"
+    }
+  }
+}
