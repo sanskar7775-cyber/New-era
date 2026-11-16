@@ -91,8 +91,10 @@ import com.example.ui.screens.VoiceAiScreen
 import com.example.ui.screens.WebsitePortalScreen
 import com.example.ui.theme.NewEraTheme
 import com.google.firebase.Firebase
+import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.auth
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 
 private sealed class NewEraRoute(
@@ -140,13 +142,20 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun AppNavigation(auth: FirebaseAuth = Firebase.auth) {
+fun AppNavigation(auth: FirebaseAuth? = null) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val credentialManager = remember(context) { CredentialManager.create(context) }
     val sessionManager = remember(context) { UserSessionManager(context) }
+    val resolvedAuth = remember(auth, context) {
+        auth ?: runCatching {
+            if (FirebaseApp.getApps(context).isNotEmpty()) Firebase.auth else null
+        }.getOrNull()
+    }
     val activeSession by sessionManager.sessionFlow.collectAsStateWithLifecycle(initialValue = AuthSession())
-    val firebaseUser by auth.authStateFlow().collectAsStateWithLifecycle(initialValue = auth.currentUser)
+    val firebaseUser by remember(resolvedAuth) {
+        resolvedAuth?.authStateFlow() ?: flowOf(null)
+    }.collectAsStateWithLifecycle(initialValue = resolvedAuth?.currentUser)
 
     // Keep DataStore session synchronized if Firebase Google user is already signed in
     LaunchedEffect(firebaseUser?.uid) {

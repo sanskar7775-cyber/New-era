@@ -8,7 +8,6 @@ import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
-import com.example.R
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
@@ -37,6 +36,12 @@ internal fun FirebaseAuth.authStateFlow(): Flow<FirebaseUser?> = callbackFlow {
     awaitClose { removeAuthStateListener(listener) }
 }
 
+private fun resolveWebClientId(context: Context): String? {
+    val resId = context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
+    if (resId == 0) return null
+    return runCatching { context.getString(resId) }.getOrNull()?.takeIf { it.isNotBlank() }
+}
+
 fun attemptAutoSignIn(
     context: Context,
     credentialManager: CredentialManager,
@@ -44,14 +49,12 @@ fun attemptAutoSignIn(
     onUnauthenticated: () -> Unit,
     scope: CoroutineScope
 ) {
-    val existing = Firebase.auth.currentUser
+    val existing = runCatching { Firebase.auth.currentUser }.getOrNull()
     if (existing != null) {
         onAuthSuccess(existing)
         return
     }
-    val clientId = try {
-        context.getString(R.string.default_web_client_id)
-    } catch (e: Exception) {
+    val clientId = resolveWebClientId(context) ?: run {
         onUnauthenticated()
         return
     }
@@ -98,10 +101,8 @@ fun onGoogleSignInClicked(
     scope: CoroutineScope,
     onAuthCancelled: () -> Unit = {}
 ) {
-    val clientId = try {
-        context.getString(R.string.default_web_client_id)
-    } catch (e: Exception) {
-        onAuthError("Google Sign-In configuration missing: default_web_client_id not found")
+    val clientId = resolveWebClientId(context) ?: run {
+        onAuthError("Google Sign-In requires google-services.json configuration (default_web_client_id not found). Use Username/Password or Local Offline Preview.")
         return
     }
 
@@ -151,7 +152,7 @@ fun signOut(
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to clear credential state: ${e.message}")
             } finally {
-                Firebase.auth.signOut()
+                runCatching { Firebase.auth.signOut() }
                 onSignOutComplete()
             }
         }
