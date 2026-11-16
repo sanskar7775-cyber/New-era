@@ -5,6 +5,9 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-debug-apk:
     runs-on: ubuntu-latest
@@ -72,9 +75,41 @@ jobs:
       - name: Build Debug APK
         run: gradle :app:assembleDebug --no-daemon --no-configuration-cache --stacktrace -Dorg.gradle.jvmargs="-Xmx3g -Dfile.encoding=UTF-8"
 
+      - name: Stage APK for upload
+        run: |
+          mkdir -p dist-apk
+          APK_PATH=$(find app/build/outputs -type f -name "*.apk" | head -n 1 || true)
+          if [ -z "$APK_PATH" ]; then
+            echo "No APK found under app/build/outputs!"
+            find app/build -maxdepth 5 || true
+            exit 1
+          fi
+          echo "Found APK: $APK_PATH"
+          cp "$APK_PATH" dist-apk/NewEra-debug.apk
+          ls -lh dist-apk/NewEra-debug.apk
+
       - name: Upload New Era Debug APK
+        id: upload_artifact
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: NewEra-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: dist-apk/NewEra-debug.apk
           if-no-files-found: error
+
+      - name: Publish APK to GitHub Releases
+        id: gh_release
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="apk-v1.0.${{ github.run_number }}"
+          gh release create "$TAG" dist-apk/NewEra-debug.apk \
+            --title "New Era APK (#${{ github.run_number }})" \
+            --notes "Direct Android APK download for phone installation."
+
+      - name: Verify at least one APK distribution succeeded
+        if: steps.upload_artifact.outcome != 'success' && steps.gh_release.outcome != 'success'
+        run: |
+          echo "Both artifact upload and GitHub Release publish failed."
+          exit 1
