@@ -21,22 +21,44 @@ jobs:
 
       - name: Configure Android SDK & accept licenses
         run: |
-          SDK_DIR="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          set -e
+          SDK_DIR="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/android-sdk}}"
+          mkdir -p "$SDK_DIR" || true
+          sudo chown -R "$(id -u):$(id -g)" "$SDK_DIR" 2>/dev/null || SDK_DIR="$HOME/android-sdk"
           mkdir -p "$SDK_DIR/licenses"
-          printf "\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n8933bad161af4178b1185d1a37fbf41ea5269c55\nd56f5187479451eabf01fb78af6dfcb131a6481e" > "$SDK_DIR/licenses/android-sdk-license"
-          printf "\n84831b9409646a918e30573bab4c9c91346d8abd" > "$SDK_DIR/licenses/android-sdk-preview-license"
-          SDKMGR=$(find "$SDK_DIR" -name sdkmanager -type f 2>/dev/null | head -n 1 || true)
-          if [ -n "$SDKMGR" ]; then
-            chmod +x "$SDKMGR"
-            yes | "$SDKMGR" --sdk_root="$SDK_DIR" --licenses >/dev/null 2>&1 || true
+
+          printf "\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n8933bad161af4178b1185d1a37fbf41ea5269c55\nd56f5187479451eabf01fb78af6dfcb131a6481e\n" > "$SDK_DIR/licenses/android-sdk-license"
+          printf "\n84831b9409646a918e30573bab4c9c91346d8abd\n" > "$SDK_DIR/licenses/android-sdk-preview-license"
+
+          SDKMGR="$SDK_DIR/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMGR" ]; then
+            SDKMGR=$(find "$SDK_DIR/cmdline-tools" -name sdkmanager -type f 2>/dev/null | head -n 1 || true)
           fi
+          if [ -z "$SDKMGR" ] || [ ! -x "$SDKMGR" ]; then
+            mkdir -p "$SDK_DIR/cmdline-tools"
+            curl -fsSL "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip" -o /tmp/cmdline-tools.zip
+            unzip -q /tmp/cmdline-tools.zip -d /tmp/cmdline-extract
+            rm -rf "$SDK_DIR/cmdline-tools/latest"
+            mv /tmp/cmdline-extract/cmdline-tools "$SDK_DIR/cmdline-tools/latest"
+            rm -rf /tmp/cmdline-tools.zip /tmp/cmdline-extract
+            SDKMGR="$SDK_DIR/cmdline-tools/latest/bin/sdkmanager"
+          fi
+
+          chmod +x "$SDKMGR"
+          yes | "$SDKMGR" --sdk_root="$SDK_DIR" --licenses >/dev/null 2>&1 || true
+          "$SDKMGR" --sdk_root="$SDK_DIR" "platform-tools" "platforms;android-36.1" "build-tools;36.0.0" || \
+            "$SDKMGR" --sdk_root="$SDK_DIR" "platform-tools" "platforms;android-36" "build-tools;36.0.0" || true
+
           echo "ANDROID_HOME=$SDK_DIR" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$SDK_DIR" >> "$GITHUB_ENV"
 
-      - name: Decode debug signing keystore
+      - name: Prepare debug keystore and env
         run: |
           if [ -f debug.keystore.base64 ] && [ ! -f debug.keystore ]; then
             base64 -d debug.keystore.base64 > debug.keystore
+          fi
+          if [ ! -f .env ] && [ -f .env.example ]; then
+            cp .env.example .env
           fi
 
       - name: Set up Gradle 9.3.1
@@ -45,7 +67,7 @@ jobs:
           gradle-version: '9.3.1'
 
       - name: Build Debug APK
-        run: gradle :app:assembleDebug --no-daemon
+        run: gradle :app:assembleDebug --no-daemon --stacktrace -Dorg.gradle.jvmargs="-Xmx3g -Dfile.encoding=UTF-8"
 
       - name: Upload New Era Debug APK
         uses: actions/upload-artifact@v4
