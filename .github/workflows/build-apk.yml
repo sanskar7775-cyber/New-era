@@ -73,7 +73,15 @@ jobs:
           gradle-version: '9.3.1'
 
       - name: Build Debug APK
-        run: gradle :app:assembleDebug --no-daemon --no-configuration-cache --stacktrace -Dorg.gradle.jvmargs="-Xmx3g -Dfile.encoding=UTF-8"
+        env:
+          GRADLE_OPTS: "-Xmx3g -XX:MaxMetaspaceSize=1g"
+        run: |
+          set -o pipefail
+          gradle :app:assembleDebug --no-configuration-cache --console=plain -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" -Dorg.gradle.workers.max=2 2>&1 | tee gradle-build.log || {
+            echo "=== FAILURE SUMMARY ==="
+            grep -A 40 "FAILURE: Build failed" gradle-build.log || tail -n 80 gradle-build.log
+            exit 1
+          }
 
       - name: Stage APK for upload
         run: |
