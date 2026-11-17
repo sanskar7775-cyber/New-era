@@ -9,6 +9,7 @@ import com.example.video.VideoColorGrade
 import com.example.video.VideoMotionStyle
 import com.example.video.VideoQualityPreset
 import com.example.video.VideoScenePlan
+import com.example.firebase.FirebaseAvailability
 import com.google.firebase.Firebase
 import com.google.firebase.ai.GenerativeModel
 import com.google.firebase.ai.ai
@@ -264,6 +265,7 @@ class AiCreativeMediaService(
     ): String {
         val cleaned = rawPrompt.trim()
         if (cleaned.isBlank()) return cleaned
+        if (!FirebaseAvailability.isInitialized()) return cleaned
         return try {
             withTimeout(25_000L) {
                 val instruction = buildString {
@@ -348,6 +350,9 @@ class AiCreativeMediaService(
     ): GeneratedVideoResult {
         val cleaned = prompt.trim()
         require(cleaned.isNotBlank()) { "Video prompt must not be empty." }
+        if (!FirebaseAvailability.isInitialized()) {
+            throw IllegalStateException(FirebaseAvailability.CLOUD_AI_UNAVAILABLE_GUIDANCE)
+        }
 
         return try {
             withTimeout(210_000L) {
@@ -419,6 +424,9 @@ class AiCreativeMediaService(
             throw e
         } catch (e: Exception) {
             Log.e(TAG, "generateEnhancedVideo failed", e)
+            if (FirebaseAvailability.isFirebaseInitError(e)) {
+                throw IllegalStateException(FirebaseAvailability.CLOUD_AI_UNAVAILABLE_GUIDANCE, e)
+            }
             throw e
         }
     }
@@ -475,6 +483,9 @@ class AiCreativeMediaService(
         modelId: String,
         referenceImage: Bitmap?
     ): Bitmap {
+        if (!FirebaseAvailability.isInitialized()) {
+            throw IllegalStateException(FirebaseAvailability.CLOUD_AI_UNAVAILABLE_GUIDANCE)
+        }
         return try {
             withTimeout(60_000L) {
                 val config = generationConfig {
@@ -509,6 +520,9 @@ class AiCreativeMediaService(
             throw e
         } catch (e: Exception) {
             Log.e(TAG, "synthesizeSingleImage failed with $modelId", e)
+            if (FirebaseAvailability.isFirebaseInitError(e)) {
+                throw IllegalStateException(FirebaseAvailability.CLOUD_AI_UNAVAILABLE_GUIDANCE, e)
+            }
             throw e
         }
     }

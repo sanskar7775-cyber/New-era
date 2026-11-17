@@ -1,5 +1,6 @@
 package com.example.ai.engine
 
+import com.example.firebase.FirebaseAvailability
 import com.google.firebase.Firebase
 import com.google.firebase.ai.GenerativeModel
 import com.google.firebase.ai.ai
@@ -197,6 +198,9 @@ class System2ReasoningEngine {
         complexityScore: Int,
         startMillis: Long
     ): Pair<String, ReasoningTrace> {
+        if (!FirebaseAvailability.isInitialized()) {
+            return fallbackTrace(candidateAnswer, complexityScore, startMillis)
+        }
         return try {
             withTimeout(35_000L) {
                 val prompt = """

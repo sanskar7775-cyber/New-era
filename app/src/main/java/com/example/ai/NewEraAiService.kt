@@ -12,6 +12,7 @@ import com.example.data.model.AiToolKind
 import com.example.device.DeviceController
 import com.example.googleapps.GoogleAppIntegration
 import com.example.googleapps.GoogleWorkspaceClient
+import com.example.firebase.FirebaseAvailability
 import com.example.web.WebSearchTool
 import com.google.firebase.Firebase
 import com.google.firebase.ai.Chat
@@ -298,6 +299,16 @@ class NewEraAiService(
             append("User: ").append(userPrompt)
         }
 
+        if (!FirebaseAvailability.isInitialized()) {
+            return handleLocalAssistantFallback(
+                userPrompt = userPrompt,
+                attachedImage = attachedImage,
+                activeMemory = activeMemory,
+                startMs = startMs,
+                complexityScore = complexityScore
+            )
+        }
+
         return try {
             withTimeout(60_000L) {
                 if (effectiveMode == ComputeMode.FAST_SYSTEM1 && attachedImage == null && complexityScore < 30) {
@@ -396,6 +407,15 @@ class NewEraAiService(
         } catch (e: Exception) {
             Log.e(TAG, "askAssistant failed", e)
             resetChatSession()
+            if (FirebaseAvailability.isFirebaseInitError(e)) {
+                return handleLocalAssistantFallback(
+                    userPrompt = userPrompt,
+                    attachedImage = attachedImage,
+                    activeMemory = activeMemory,
+                    startMs = startMs,
+                    complexityScore = complexityScore
+                )
+            }
             throw e
         }
     }
@@ -405,6 +425,9 @@ class NewEraAiService(
         input: String,
         attachedImage: Bitmap? = null
     ): String {
+        if (!FirebaseAvailability.isInitialized()) {
+            return runLocalAiToolFallback(toolKind, input)
+        }
         return try {
             withTimeout(60_000L) {
                 when (toolKind) {
@@ -499,11 +522,17 @@ class NewEraAiService(
             throw e
         } catch (e: Exception) {
             Log.e(TAG, "runAiTool failed", e)
+            if (FirebaseAvailability.isFirebaseInitError(e)) {
+                return runLocalAiToolFallback(toolKind, input)
+            }
             throw e
         }
     }
 
     suspend fun analyzeVisionImage(bitmap: Bitmap, prompt: String): String {
+        if (!FirebaseAvailability.isInitialized()) {
+            throw IllegalStateException(FirebaseAvailability.CLOUD_AI_UNAVAILABLE_GUIDANCE)
+        }
         return try {
             withTimeout(60_000L) {
                 val response = generalModel.generateContent(
@@ -518,6 +547,11 @@ class NewEraAiService(
             throw IllegalStateException("Vision analysis timed out after 60 seconds.", e)
         } catch (e: CancellationException) {
             throw e
+        } catch (e: Exception) {
+            if (FirebaseAvailability.isFirebaseInitError(e)) {
+                throw IllegalStateException(FirebaseAvailability.CLOUD_AI_UNAVAILABLE_GUIDANCE, e)
+            }
+            throw e
         }
     }
 
@@ -528,6 +562,9 @@ class NewEraAiService(
         previousHeadlines: List<String>,
         userInterests: List<String> = emptyList()
     ): SynthesizedDailyLesson {
+        if (!FirebaseAvailability.isInitialized()) {
+            return buildLocalDailyLesson(topic, todayDate, liveWebSnippets)
+        }
         return try {
             withTimeout(60_000L) {
                 val interestHint = if (userInterests.isNotEmpty()) {
@@ -587,11 +624,20 @@ class NewEraAiService(
             throw IllegalStateException("Daily internet learning timed out.", e)
         } catch (e: CancellationException) {
             throw e
+        } catch (e: Exception) {
+            if (FirebaseAvailability.isFirebaseInitError(e)) {
+                buildLocalDailyLesson(topic, todayDate, liveWebSnippets)
+            } else {
+                throw e
+            }
         }
     }
 
     suspend fun transcribeAudio(wavBytes: ByteArray): String {
         if (wavBytes.size <= 44) return ""
+        if (!FirebaseAvailability.isInitialized()) {
+            throw IllegalStateException(FirebaseAvailability.CLOUD_AI_UNAVAILABLE_GUIDANCE)
+        }
         return try {
             withTimeout(30_000L) {
                 val response = generalModel.generateContent(
@@ -610,11 +656,17 @@ class NewEraAiService(
             throw e
         } catch (e: Exception) {
             Log.e(TAG, "transcribeAudio failed", e)
+            if (FirebaseAvailability.isFirebaseInitError(e)) {
+                throw IllegalStateException(FirebaseAvailability.CLOUD_AI_UNAVAILABLE_GUIDANCE, e)
+            }
             throw e
         }
     }
 
     suspend fun generateAiImage(prompt: String, aspectRatio: AspectRatio = AspectRatio.SQUARE_1x1): Bitmap {
+        if (!FirebaseAvailability.isInitialized()) {
+            throw IllegalStateException(FirebaseAvailability.CLOUD_AI_UNAVAILABLE_GUIDANCE)
+        }
         return try {
             withTimeout(60_000L) {
                 val config = generationConfig {
@@ -640,8 +692,217 @@ class NewEraAiService(
             throw e
         } catch (e: Exception) {
             Log.e(TAG, "generateAiImage failed", e)
+            if (FirebaseAvailability.isFirebaseInitError(e)) {
+                throw IllegalStateException(FirebaseAvailability.CLOUD_AI_UNAVAILABLE_GUIDANCE, e)
+            }
             throw e
         }
+    }
+
+    private suspend fun handleLocalAssistantFallback(
+        userPrompt: String,
+        attachedImage: Bitmap?,
+        activeMemory: String,
+        startMs: Long,
+        complexityScore: Int
+    ): AiAssistantResponse {
+        val lower = userPrompt.trim().lowercase()
+        val toolsUsed = mutableListOf<String>()
+
+        if (attachedImage != null) {
+            return buildLocalAssistantResponse(
+                text = FirebaseAvailability.CLOUD_AI_UNAVAILABLE_GUIDANCE,
+                toolsUsed = emptyList(),
+                complexityScore = complexityScore,
+                startMs = startMs,
+                hypothesis = "Local edge router check (image analysis requires Cloud Gemini)"
+            )
+        }
+
+        when {
+            lower.contains("flashlight") || lower.contains("torch") -> {
+                val enable = !lower.contains("off") && !lower.contains("disable")
+                val msg = deviceController.toggleFlashlight(enable)
+                    .fold(onSuccess = { it }, onFailure = { it.message ?: "Flashlight unavailable." })
+                toolsUsed.add("toggle_flashlight")
+                return buildLocalAssistantResponse(msg, toolsUsed, complexityScore, startMs, "On-device hardware torch command")
+            }
+
+            lower.contains("battery") || lower.contains("phone status") || lower.contains("device status") || lower.contains("storage") -> {
+                val t = deviceController.getDeviceTelemetry()
+                toolsUsed.add("get_phone_status")
+                val msg = "Device: ${t.deviceModel} (${t.androidVersion}) • Battery: ${t.batteryPercent}% " +
+                    "(charging=${t.isCharging}) • Network: ${t.networkStatus} • Free Storage: ${t.availableStorageGb} • Installed Apps: ${t.installedAppCount}."
+                return buildLocalAssistantResponse(msg, toolsUsed, complexityScore, startMs, "On-device telemetry readout")
+            }
+
+            lower.contains("list apps") || lower.contains("installed apps") -> {
+                val apps = deviceController.getInstalledApps()
+                toolsUsed.add("list_installed_apps")
+                val names = apps.take(25).joinToString(", ") { it.appName }
+                val msg = if (apps.isEmpty()) "No launchable apps detected." else "Installed apps (${apps.size}): $names"
+                return buildLocalAssistantResponse(msg, toolsUsed, complexityScore, startMs, "On-device package query")
+            }
+
+            lower.startsWith("open ") || lower.startsWith("launch ") -> {
+                val target = userPrompt.trim()
+                    .replaceFirst(Regex("^(open|launch)\\s+", RegexOption.IGNORE_CASE), "")
+                    .trim()
+                if (target.contains("setting", ignoreCase = true)) {
+                    val section = when {
+                        lower.contains("wifi") || lower.contains("wi-fi") -> "wifi"
+                        lower.contains("bluetooth") -> "bluetooth"
+                        lower.contains("display") -> "display"
+                        lower.contains("sound") || lower.contains("volume") -> "sound"
+                        lower.contains("battery") -> "battery"
+                        else -> "main"
+                    }
+                    val msg = deviceController.openSystemSettings(section)
+                        .fold(onSuccess = { it }, onFailure = { it.message ?: "Could not open settings." })
+                    toolsUsed.add("open_phone_settings")
+                    return buildLocalAssistantResponse(msg, toolsUsed, complexityScore, startMs, "On-device settings navigation")
+                } else if (target.isNotBlank()) {
+                    val msg = deviceController.launchAppByName(target)
+                        .fold(onSuccess = { it }, onFailure = { it.message ?: "Could not open $target." })
+                    toolsUsed.add("launch_app")
+                    return buildLocalAssistantResponse(msg, toolsUsed, complexityScore, startMs, "On-device app launcher")
+                }
+            }
+
+            lower.contains("timer") -> {
+                val number = Regex("""\d+""").find(lower)?.value?.toIntOrNull() ?: 60
+                val seconds = if (lower.contains("min")) number * 60 else number
+                val msg = deviceController.setTimer(seconds, "New Era Timer")
+                    .fold(onSuccess = { it }, onFailure = { it.message ?: "Could not set timer." })
+                toolsUsed.add("set_timer")
+                return buildLocalAssistantResponse(msg, toolsUsed, complexityScore, startMs, "On-device alarm timer intent")
+            }
+
+            lower.startsWith("http://") || lower.startsWith("https://") -> {
+                val page = webSearchTool.fetchWebPage(userPrompt.trim())
+                toolsUsed.add("fetch_url")
+                return buildLocalAssistantResponse(page.take(1600), toolsUsed, complexityScore, startMs, "Direct live web page fetch")
+            }
+
+            lower.startsWith("search ") || lower.contains("news") || lower.contains("weather") || lower.contains("latest") -> {
+                val query = userPrompt.trim().replaceFirst(Regex("^search\\s+", RegexOption.IGNORE_CASE), "")
+                val snippets = webSearchTool.searchInternet(query)
+                toolsUsed.add("web_search")
+                return buildLocalAssistantResponse(
+                    text = "Live Web Search Results for \"$query\":\n\n$snippets",
+                    toolsUsed = toolsUsed,
+                    complexityScore = complexityScore,
+                    startMs = startMs,
+                    hypothesis = "Direct live web search (local mode)"
+                )
+            }
+        }
+
+        val reply = buildString {
+            appendLine("New Era is running in Local Edge Mode (Cloud Gemini needs GOOGLE_SERVICES_JSON in GitHub Secrets).")
+            appendLine()
+            appendLine("Available right now without Google/Firebase:")
+            appendLine("• Phone commands: \"battery status\", \"turn on flashlight\", \"list apps\", \"open Chrome\", \"set timer 2 minutes\"")
+            appendLine("• Live Web search: \"search <topic>\" or paste any https:// URL")
+            appendLine("• Math & Encrypted Vault & Local Web Portal")
+            if (activeMemory.isNotBlank()) {
+                appendLine()
+                appendLine("Saved Memory Context:")
+                appendLine(activeMemory.take(400))
+            }
+        }.trim()
+
+        return buildLocalAssistantResponse(
+            text = reply,
+            toolsUsed = listOf("edge_local_kernel"),
+            complexityScore = complexityScore,
+            startMs = startMs,
+            hypothesis = "On-device assistant fallback"
+        )
+    }
+
+    private fun buildLocalAssistantResponse(
+        text: String,
+        toolsUsed: List<String>,
+        complexityScore: Int,
+        startMs: Long,
+        hypothesis: String
+    ): AiAssistantResponse {
+        val clean = ConstitutionalGuardrailEngine.redactSecrets(text)
+        return AiAssistantResponse(
+            text = clean,
+            toolsUsed = toolsUsed,
+            reasoningTrace = ReasoningTrace(
+                computeMode = ComputeMode.FAST_SYSTEM1,
+                executionRoute = ExecutionRoute.EDGE_LOCAL,
+                complexityScore = complexityScore,
+                hypothesesEvaluated = listOf(hypothesis),
+                selfCorrections = listOf("Local edge guardrail check passed"),
+                guardrailSeal = ConstitutionalGuardrailEngine.computeAuditSeal(clean),
+                latencyMs = (System.currentTimeMillis() - startMs).coerceAtLeast(1L)
+            )
+        )
+    }
+
+    private suspend fun runLocalAiToolFallback(toolKind: AiToolKind, input: String): String {
+        return when (toolKind) {
+            AiToolKind.WEB_BRIEF -> {
+                val results = webSearchTool.searchInternet(input)
+                "# Live Web Brief: ${input.take(60)}\n\n$results"
+            }
+
+            AiToolKind.SUMMARIZER -> {
+                val maybeUrl = input.trim()
+                val source = if (maybeUrl.startsWith("http://") || maybeUrl.startsWith("https://")) {
+                    webSearchTool.fetchWebPage(maybeUrl)
+                } else {
+                    input
+                }
+                val sentences = source.split(Regex("(?<=[.!?])\\s+|\\n+"))
+                    .map { it.trim() }
+                    .filter { it.length > 20 }
+                    .take(5)
+                if (sentences.isEmpty()) source.take(600)
+                else sentences.joinToString("\n• ", prefix = "Key Highlights:\n• ")
+            }
+
+            AiToolKind.ACTION_PLANNER -> {
+                """
+                # Action Plan: ${input.trim().take(70)}
+                1. Clarify the exact milestone and measurable outcome for "${input.trim().take(50)}".
+                2. Break work into 3 focused 30-minute execution blocks.
+                3. Save key notes and credentials inside New Era's encrypted vault.
+                4. Review progress daily and refine next steps.
+                """.trimIndent()
+            }
+
+            AiToolKind.CODE_ARCHITECT,
+            AiToolKind.TRANSLATOR,
+            AiToolKind.EMAIL_WRITER -> FirebaseAvailability.CLOUD_AI_UNAVAILABLE_GUIDANCE
+        }
+    }
+
+    private fun buildLocalDailyLesson(
+        topic: String,
+        todayDate: String,
+        liveWebSnippets: String
+    ): SynthesizedDailyLesson {
+        val firstLine = liveWebSnippets.lineSequence()
+            .map { it.trim() }
+            .firstOrNull { it.length > 15 }
+            ?: "Fresh live web briefing on $topic"
+        return SynthesizedDailyLesson(
+            headline = "$topic Brief ($todayDate)",
+            keyTakeaway = firstLine.take(180),
+            deepSummary = liveWebSnippets.ifBlank {
+                "Collected local topic brief for $topic on $todayDate."
+            }.take(900),
+            sources = listOf("Live Web Search ($todayDate)"),
+            suggestions = listOf(
+                "Explore $topic on Web" to "search $topic latest breakthroughs",
+                "Open Web Brief Tool" to "Search the latest updates on $topic"
+            )
+        )
     }
 
     private suspend fun executeToolCall(name: String, args: Map<String, Any?>): JsonObject {

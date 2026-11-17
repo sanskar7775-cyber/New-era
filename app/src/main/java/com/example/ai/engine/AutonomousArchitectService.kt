@@ -1,5 +1,6 @@
 package com.example.ai.engine
 
+import com.example.firebase.FirebaseAvailability
 import com.google.firebase.Firebase
 import com.google.firebase.ai.GenerativeModel
 import com.google.firebase.ai.ai
@@ -75,6 +76,10 @@ class AutonomousArchitectService {
             appendLine("Never include hardcoded real API keys or secrets; use scoped gateway/vault abstractions.")
         }
 
+        if (!FirebaseAvailability.isInitialized()) {
+            return buildLocalFallbackBlueprint(cleanGoal, overrideInstruction)
+        }
+
         return try {
             withTimeout(60_000L) {
                 val raw = architectModel.generateContent(instruction).text
@@ -108,6 +113,60 @@ class AutonomousArchitectService {
             throw IllegalStateException("Autonomous architecture synthesis timed out.", e)
         } catch (e: CancellationException) {
             throw e
+        } catch (e: Exception) {
+            if (FirebaseAvailability.isFirebaseInitError(e)) {
+                buildLocalFallbackBlueprint(cleanGoal, overrideInstruction)
+            } else {
+                throw e
+            }
         }
+    }
+
+    private fun buildLocalFallbackBlueprint(
+        cleanGoal: String,
+        overrideInstruction: String?
+    ): AutonomousBlueprint {
+        val projectTitle = cleanGoal.split(Regex("\\s+"))
+            .filter { it.isNotBlank() }
+            .take(4)
+            .joinToString(" ")
+            .replaceFirstChar { it.uppercase() }
+            .ifBlank { "New Era Architecture" }
+        val overrideNote = overrideInstruction?.trim()?.takeIf { it.isNotBlank() }
+        val starter = """
+            // On-Device Synthesized Blueprint Skeleton (Local Architect Mode)
+            data class UiState(
+                val isLoading: Boolean = false,
+                val items: List<String> = emptyList(),
+                val errorMessage: String? = null
+            )
+
+            class FeatureRepository(private val localStore: LocalWorkspaceStore) {
+                suspend fun saveRecord(payload: String) = localStore.persistEncrypted(payload)
+            }
+        """.trimIndent()
+        return AutonomousBlueprint(
+            projectName = projectTitle,
+            chosenStack = "Kotlin + Jetpack Compose + Material 3 + DataStore + AES-256-GCM",
+            stackRationale = "Selected on-device Android stack with reactive StateFlow, local encrypted persistence, and zero external dependency bottlenecks." +
+                (overrideNote?.let { " Applied override: $it" } ?: ""),
+            databaseAndStateDesign = "Single source of truth via StateFlow<UiState> backed by encrypted local DataStore and optional cloud sync when Firebase is configured.",
+            heuristicUiTokens = "Material 3 dark/light adaptive colorScheme, 8dp spacing grid, 16dp cards, 48dp minimum interactive targets.",
+            componentTree = listOf(
+                "MainShell -> NavigationBar / NavigationRail",
+                "FeatureDashboard -> SummaryCards + ActionSheet",
+                "DetailEditor -> ValidatedForm + EncryptedSaveAction"
+            ),
+            edgeCasesHandled = listOf(
+                "Graceful offline/local DataStore persistence when Cloud Firebase is absent",
+                "Empty states, loading indicators, and CancellationException propagation",
+                "Zero hardcoded API keys via scoped vault storage"
+            ),
+            architecturalChangelog = listOf(
+                "Synthesized locally via New Era Edge Architect (add GOOGLE_SERVICES_JSON secret to GitHub for Cloud Gemini expansion)"
+            ),
+            starterCode = starter,
+            guardrailAuditSeal = ConstitutionalGuardrailEngine.computeAuditSeal("$projectTitle|$starter")
+        )
     }
 }
