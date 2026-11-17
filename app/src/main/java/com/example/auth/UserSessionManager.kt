@@ -23,13 +23,13 @@ data class AuthSession(
     val username: String = "",
     val email: String = "",
     val isOwner: Boolean = false,
-    val authMethod: String = "none" // "google" or "none"
+    val authMethod: String = "none" // "direct", "direct_owner", "google", "none"
 )
 
 data class RegisteredUserRecord(
     val uid: String,
     val username: String,
-    val authMethod: String = "google",
+    val authMethod: String = "direct",
     val email: String = "",
     val isOwner: Boolean = false,
     val createdAtMillis: Long = System.currentTimeMillis(),
@@ -54,6 +54,11 @@ data class UserDirectorySnapshot(
         get() = users.size
 }
 
+sealed interface DirectAuthResult {
+    data class Success(val session: AuthSession) : DirectAuthResult
+    data class Error(val message: String) : DirectAuthResult
+}
+
 class UserSessionManager(private val context: Context) {
 
     private val appContext = context.applicationContext
@@ -73,6 +78,75 @@ class UserSessionManager(private val context: Context) {
     suspend fun getSession(): AuthSession = sessionFlow.first()
 
     suspend fun getDirectory(): UserDirectorySnapshot = directoryFlow.first()
+
+    suspend fun signInDirect(optionalOwnerCode: String = ""): DirectAuthResult {
+        val trimmedCode = optionalOwnerCode.trim()
+        if (trimmedCode.isEmpty()) {
+            val standardSession = AuthSession(
+                isSignedIn = true,
+                uid = OwnerAccountPolicy.STANDARD_DIRECT_UID,
+                username = "New Era User",
+                email = "",
+                isOwner = false,
+                authMethod = "direct"
+            )
+            saveActiveSession(standardSession)
+            upsertUserAndLogActivity(
+                uid = standardSession.uid,
+                username = standardSession.username,
+                authMethod = "direct",
+                isOwner = false,
+                actionType = "DIRECT_LOGIN",
+                summary = "Entered New Era directly without Google account"
+            )
+            return DirectAuthResult.Success(standardSession)
+        }
+
+        if (!OwnerAccountPolicy.isValidSixDigitCode(trimmedCode)) {
+            return DirectAuthResult.Error(
+                "Owner code must be 6 digits, or leave it empty for standard access."
+            )
+        }
+
+        val customHash = getCustomOwnerCodeHash()
+        if (!OwnerAccountPolicy.verifyOwnerCode(trimmedCode, customHash)) {
+            return DirectAuthResult.Error(
+                "Invalid 6-digit Owner Code. Leave blank for standard access or enter the correct 6-digit code."
+            )
+        }
+
+        val ownerSession = AuthSession(
+            isSignedIn = true,
+            uid = OwnerAccountPolicy.OWNER_UID,
+            username = OwnerAccountPolicy.OWNER_DISPLAY_NAME,
+            email = "sanskar7775@gmail.com",
+            isOwner = true,
+            authMethod = "direct_owner"
+        )
+        saveActiveSession(ownerSession)
+        upsertUserAndLogActivity(
+            uid = ownerSession.uid,
+            username = ownerSession.username,
+            authMethod = "direct_owner",
+            email = ownerSession.email,
+            isOwner = true,
+            actionType = "OWNER_DIRECT_LOGIN",
+            summary = "Owner unlocked direct session using 6-digit code"
+        )
+        return DirectAuthResult.Success(ownerSession)
+    }
+
+    suspend fun updateOwnerCode(newSixDigitCode: String): Result<Unit> {
+        val clean = newSixDigitCode.trim()
+        if (!OwnerAccountPolicy.isValidSixDigitCode(clean)) {
+            return Result.failure(IllegalArgumentException("Owner code must be exactly 6 digits."))
+        }
+        val hash = OwnerAccountPolicy.sha256Hex(clean)
+        appContext.userSessionDataStore.edit { prefs ->
+            prefs[KEY_OWNER_CODE_SHA256] = hash
+        }
+        return Result.success(Unit)
+    }
 
     suspend fun activateGoogleUserSession(
         uid: String,
@@ -109,7 +183,7 @@ class UserSessionManager(private val context: Context) {
         username: String,
         actionType: String,
         summary: String,
-        authMethod: String = "google",
+        authMethod: String = "direct",
         isOwner: Boolean = false
     ) {
         if (uid.isBlank() || username.isBlank()) return
@@ -155,6 +229,10 @@ class UserSessionManager(private val context: Context) {
         }
     }
 
+    private suspend fun getCustomOwnerCodeHash(): String? {
+        return appContext.userSessionDataStore.data.first()[KEY_OWNER_CODE_SHA256]
+    }
+
     private suspend fun saveActiveSession(session: AuthSession) {
         appContext.userSessionDataStore.edit { prefs ->
             prefs[KEY_ACTIVE_SESSION] = encodeSession(session)
@@ -180,6 +258,7 @@ class UserSessionManager(private val context: Context) {
             val updatedUser = if (existing != null) {
                 existing.copy(
                     username = username,
+                    authMethod = authMethod,
                     email = email.ifBlank { existing.email },
                     isOwner = existing.isOwner || isOwner,
                     lastActiveMillis = now,
@@ -237,7 +316,7 @@ class UserSessionManager(private val context: Context) {
     private fun decodeSession(raw: String): AuthSession {
         val o = JSONObject(raw)
         val method = o.optString("authMethod", "none")
-        if (method != "google") return AuthSession()
+        if (method !in setOf("direct", "direct_owner", "google")) return AuthSession()
         return AuthSession(
             isSignedIn = o.optBoolean("isSignedIn", false),
             uid = o.optString("uid", ""),
@@ -289,7 +368,7 @@ class UserSessionManager(private val context: Context) {
             RegisteredUserRecord(
                 uid = o.optString("uid"),
                 username = o.optString("username"),
-                authMethod = o.optString("authMethod", "google"),
+                authMethod = o.optString("authMethod", "direct"),
                 email = o.optString("email", ""),
                 isOwner = o.optBoolean("isOwner", false),
                 createdAtMillis = o.optLong("createdAtMillis", 0L),
@@ -315,5 +394,6 @@ class UserSessionManager(private val context: Context) {
     companion object {
         private val KEY_ACTIVE_SESSION = stringPreferencesKey("active_auth_session_v1")
         private val KEY_DIRECTORY_JSON = stringPreferencesKey("user_directory_activity_v1")
+        private val KEY_OWNER_CODE_SHA256 = stringPreferencesKey("owner_six_digit_code_sha256_v1")
     }
 }

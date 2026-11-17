@@ -16,58 +16,51 @@ import org.robolectric.annotation.Config
 class OwnerAccountPolicyTest {
 
     @Test
-    fun `authorized owner google account grants owner power to sanskar7775`() {
-        assertTrue(OwnerAccountPolicy.isAuthorizedOwnerEmail("sanskar7775@gmail.com"))
-        assertTrue(OwnerAccountPolicy.isAuthorizedOwnerEmail("  SANSKAR7775@GMAIL.COM "))
-        assertTrue(OwnerAccountPolicy.isAuthorizedOwnerEmail("sanskarghogare076@gmail.com"))
-        assertFalse(OwnerAccountPolicy.isAuthorizedOwnerEmail("alice@gmail.com"))
-        assertFalse(OwnerAccountPolicy.isAuthorizedOwnerEmail(""))
-        assertFalse(OwnerAccountPolicy.isAuthorizedOwnerEmail(null))
+    fun `owner 6 digit code verifies accurately and rejects invalid inputs`() {
+        assertTrue(OwnerAccountPolicy.verifyOwnerCode("777777"))
+        assertTrue(OwnerAccountPolicy.verifyOwnerCode(" 777777 "))
+        assertFalse(OwnerAccountPolicy.verifyOwnerCode("123456"))
+        assertFalse(OwnerAccountPolicy.verifyOwnerCode("77777"))
+        assertFalse(OwnerAccountPolicy.verifyOwnerCode("abcdef"))
+        assertFalse(OwnerAccountPolicy.verifyOwnerCode(""))
+        assertFalse(OwnerAccountPolicy.verifyOwnerCode(null))
     }
 
     @Test
-    fun `google user sessions track owner status, user directory, and activity feed`() = runBlocking {
+    fun `direct login supports optional 6 digit owner code and code rotation without Google`() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val manager = UserSessionManager(context)
         manager.signOutSession()
 
-        // 1. Standard Google user signs in
-        val aliceSession = manager.activateGoogleUserSession(
-            uid = "uid_alice_1",
-            email = "alice@gmail.com",
-            displayName = "Alice"
-        )
-        assertTrue(aliceSession.isSignedIn)
-        assertEquals("google", aliceSession.authMethod)
-        assertEquals("Alice", aliceSession.username)
-        assertFalse(aliceSession.isOwner)
+        // 1. Blank code signs in directly without owner privileges
+        val directRes = manager.signInDirect("")
+        assertTrue(directRes is DirectAuthResult.Success)
+        val directSession = (directRes as DirectAuthResult.Success).session
+        assertTrue(directSession.isSignedIn)
+        assertFalse(directSession.isOwner)
+        assertEquals("direct", directSession.authMethod)
 
-        // 2. Record user activity for Alice
-        manager.recordUserActivity(
-            uid = aliceSession.uid,
-            username = aliceSession.username,
-            actionType = "IMAGE_STUDIO",
-            summary = "Generated portrait",
-            authMethod = "google",
-            isOwner = false
-        )
+        // 2. Wrong 6-digit code fails cleanly without crashing
+        val wrongRes = manager.signInDirect("111111")
+        assertTrue(wrongRes is DirectAuthResult.Error)
 
-        // 3. Owner Google account (sanskar7775@gmail.com) signs in with Owner powers
-        val ownerSession = manager.activateGoogleUserSession(
-            uid = "uid_owner_sanskar",
-            email = "sanskar7775@gmail.com",
-            displayName = "Sanskar"
-        )
+        // 3. Correct 6-digit Owner Code (777777) unlocks Owner privileges
+        val ownerRes = manager.signInDirect("777777")
+        assertTrue(ownerRes is DirectAuthResult.Success)
+        val ownerSession = (ownerRes as DirectAuthResult.Success).session
         assertTrue(ownerSession.isSignedIn)
-        assertEquals("google", ownerSession.authMethod)
         assertTrue(ownerSession.isOwner)
+        assertEquals("direct_owner", ownerSession.authMethod)
 
-        // 4. Verify Owner Directory Snapshot tracks users, emails, and activity events
+        // 4. Owner can rotate their 6-digit Owner Code
+        val rotateRes = manager.updateOwnerCode("888999")
+        assertTrue(rotateRes.isSuccess)
+        assertTrue(manager.signInDirect("888999") is DirectAuthResult.Success)
+        assertTrue(manager.signInDirect("777777") is DirectAuthResult.Error)
+
+        // 5. Activity directory tracks direct sessions cleanly
         val directory = manager.getDirectory()
         assertTrue(directory.totalUsers >= 2)
-        val ownerRecord = directory.users.firstOrNull { it.uid == "uid_owner_sanskar" }
-        assertTrue(ownerRecord?.isOwner == true)
-        assertEquals("sanskar7775@gmail.com", ownerRecord?.email)
-        assertTrue(directory.activities.any { it.username == "Alice" && it.actionType == "IMAGE_STUDIO" })
+        assertTrue(directory.activities.any { it.actionType == "OWNER_DIRECT_LOGIN" })
     }
 }

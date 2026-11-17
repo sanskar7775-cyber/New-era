@@ -20,12 +20,15 @@ import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -38,6 +41,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.example.auth.RegisteredUserRecord
 import com.example.auth.UserActivityEvent
@@ -51,10 +56,13 @@ import java.util.Locale
 fun OwnerMonitorSheet(
     directory: UserDirectorySnapshot,
     onRefresh: () -> Unit,
+    onUpdateOwnerCode: (String) -> Unit = {},
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var selectedUsernameFilter by remember { mutableStateOf<String?>(null) }
+    var newOwnerCode by remember { mutableStateOf("") }
+    var codeSavedNotice by remember { mutableStateOf(false) }
     val dateFormat = remember { SimpleDateFormat("MMM d, HH:mm", Locale.US) }
 
     val filteredActivities = remember(directory.activities, selectedUsernameFilter) {
@@ -94,7 +102,7 @@ fun OwnerMonitorSheet(
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
-                            text = "Owner: sanskar7775@gmail.com • Live Google Users & Activity",
+                            text = "Owner Control • 6-Digit Owner Access",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -129,6 +137,37 @@ fun OwnerMonitorSheet(
                         .weight(1f)
                         .testTag("owner_total_activities_count")
                 )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = newOwnerCode,
+                    onValueChange = { input ->
+                        newOwnerCode = input.filter { it.isDigit() }.take(6)
+                        codeSavedNotice = false
+                    },
+                    label = { Text(if (codeSavedNotice) "Owner Code Updated" else "Change 6-Digit Code") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                    modifier = Modifier.weight(1f)
+                )
+                Button(
+                    onClick = {
+                        if (newOwnerCode.length == 6) {
+                            onUpdateOwnerCode(newOwnerCode)
+                            newOwnerCode = ""
+                            codeSavedNotice = true
+                        }
+                    },
+                    enabled = newOwnerCode.length == 6
+                ) {
+                    Text("Save")
+                }
             }
 
             Text(

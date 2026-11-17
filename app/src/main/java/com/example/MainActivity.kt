@@ -71,10 +71,9 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import com.example.auth.OwnerAccountPolicy
+import com.example.auth.AuthSession
+import com.example.auth.DirectAuthResult
 import com.example.auth.UserSessionManager
-import com.example.auth.authStateFlow
-import com.example.auth.signOut
 import com.example.firebase.configureAppCheck
 import com.example.ui.MainViewModel
 import com.example.ui.SyncUiState
@@ -89,11 +88,6 @@ import com.example.ui.screens.VaultSyncSheet
 import com.example.ui.screens.VoiceAiScreen
 import com.example.ui.screens.WebsitePortalScreen
 import com.example.ui.theme.NewEraTheme
-import com.google.firebase.Firebase
-import com.google.firebase.FirebaseApp
-import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.auth.auth
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 
 private sealed class NewEraRoute(
@@ -141,58 +135,36 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun AppNavigation(auth: FirebaseAuth? = null) {
+fun AppNavigation() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val credentialManager = remember(context) { CredentialManager.create(context) }
     val sessionManager = remember(context) { UserSessionManager(context) }
-    val resolvedAuth = remember(auth, context) {
-        auth ?: runCatching {
-            if (FirebaseApp.getApps(context).isNotEmpty()) Firebase.auth else null
-        }.getOrNull()
-    }
-    val activeSession by sessionManager.sessionFlow.collectAsStateWithLifecycle(initialValue = null)
-    val firebaseUser by remember(resolvedAuth) {
-        resolvedAuth?.authStateFlow() ?: flowOf(null)
-    }.collectAsStateWithLifecycle(initialValue = resolvedAuth?.currentUser)
+    val activeSession by sessionManager.sessionFlow.collectAsStateWithLifecycle(initialValue = AuthSession())
 
-    // Keep DataStore directory & owner status synchronized for authenticated Google users
-    LaunchedEffect(firebaseUser?.uid, firebaseUser?.email) {
-        val fb = firebaseUser
-        if (fb != null && (activeSession?.uid != fb.uid || activeSession?.authMethod != "google")) {
-            sessionManager.activateGoogleUserSession(fb.uid, fb.email, fb.displayName)
-        }
-    }
-
-    val signedInUser = firebaseUser
-    if (signedInUser != null) {
-        val resolvedName = signedInUser.displayName?.trim()?.takeIf { it.isNotBlank() }
-            ?: signedInUser.email?.substringBefore("@")?.takeIf { it.isNotBlank() }
-            ?: "User"
-        val isOwnerSession = OwnerAccountPolicy.isAuthorizedOwnerEmail(signedInUser.email)
-        key(signedInUser.uid) {
+    if (activeSession.isSignedIn && activeSession.uid.isNotBlank()) {
+        key(activeSession.uid, activeSession.isOwner) {
             NewEraMainShell(
-                currentUserId = signedInUser.uid,
-                currentUsername = resolvedName,
-                currentUserEmail = signedInUser.email.orEmpty(),
-                isOwnerSession = isOwnerSession,
+                currentUserId = activeSession.uid,
+                currentUsername = activeSession.username.ifBlank { "New Era User" },
+                currentUserEmail = activeSession.email,
+                isOwnerSession = activeSession.isOwner,
+                authMethod = activeSession.authMethod,
+                onUpdateOwnerCode = { newCode ->
+                    sessionManager.updateOwnerCode(newCode)
+                },
                 onSignOutComplete = {
                     scope.launch {
                         sessionManager.signOutSession()
-                        signOut(credentialManager, scope)
                     }
                 }
             )
         }
     } else {
         AuthScreen(
-            onGoogleAuthSuccess = { fbUser ->
-                scope.launch {
-                    sessionManager.activateGoogleUserSession(
-                        uid = fbUser.uid,
-                        email = fbUser.email,
-                        displayName = fbUser.displayName
-                    )
+            onDirectLoginSubmit = { optionalCode ->
+                when (val result = sessionManager.signInDirect(optionalCode)) {
+                    is DirectAuthResult.Success -> null
+                    is DirectAuthResult.Error -> result.message
                 }
             }
         )
@@ -206,16 +178,20 @@ fun NewEraMainShell(
     currentUsername: String = "Sanskar",
     currentUserEmail: String = "",
     isOwnerSession: Boolean = false,
+    authMethod: String = "direct",
+    onUpdateOwnerCode: suspend (String) -> Result<Unit> = { Result.success(Unit) },
     onSignOutComplete: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val appContext = remember(context) { context.applicationContext }
+    val scope = rememberCoroutineScope()
     val viewModel: MainViewModel = viewModel(
-        key = "google_${currentUserId}",
+        key = "${authMethod}_${currentUserId}",
         factory = MainViewModel.provideFactory(
             currentUserId = currentUserId,
             currentUsername = currentUsername,
             isOwnerSession = isOwnerSession,
+            authMethod = authMethod,
             appContext = appContext
         )
     )
@@ -610,6 +586,11 @@ fun NewEraMainShell(
         OwnerMonitorSheet(
             directory = userDirectoryState,
             onRefresh = { viewModel.refreshOwnerDirectory() },
+            onUpdateOwnerCode = { code ->
+                scope.launch {
+                    onUpdateOwnerCode(code)
+                }
+            },
             onDismiss = { showOwnerMonitor = false }
         )
     }

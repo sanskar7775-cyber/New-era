@@ -19,14 +19,21 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -40,41 +47,30 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.credentials.CredentialManager
 import com.example.R
-import com.example.auth.attemptAutoSignIn
-import com.example.auth.onGoogleSignInClicked
-import com.google.firebase.auth.FirebaseUser
+import kotlinx.coroutines.launch
 
 @Composable
 fun AuthScreen(
-    onGoogleAuthSuccess: (FirebaseUser) -> Unit
+    onDirectLoginSubmit: suspend (optionalOwnerCode: String) -> String?
 ) {
-    val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val credentialManager = remember(context) { CredentialManager.create(context) }
 
+    var ownerCode by remember { mutableStateOf("") }
+    var codeVisible by remember { mutableStateOf(false) }
     var isLoading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
     val primaryGlow = MaterialTheme.colorScheme.primary
     val bgColor = MaterialTheme.colorScheme.background
-
-    LaunchedEffect(Unit) {
-        attemptAutoSignIn(
-            context = context,
-            credentialManager = credentialManager,
-            onAuthSuccess = onGoogleAuthSuccess,
-            onUnauthenticated = {},
-            scope = scope
-        )
-    }
 
     Box(
         modifier = Modifier
@@ -126,7 +122,7 @@ fun AuthScreen(
             )
 
             Text(
-                text = "Autonomous System 2 AI, Multimodal Studio, Graph Memory & Encrypted Cloud Sync.",
+                text = "Direct access without any Google Account. Enter the optional 6-digit Owner Code for Owner powers, or tap Continue directly.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
@@ -148,58 +144,79 @@ fun AuthScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(6.dp))
-
-            Button(
-                onClick = {
-                    errorMessage = null
-                    isLoading = true
-                    onGoogleSignInClicked(
-                        context = context,
-                        credentialManager = credentialManager,
-                        onAuthSuccess = { user ->
-                            isLoading = false
-                            onGoogleAuthSuccess(user)
-                        },
-                        onAuthError = { msg ->
-                            isLoading = false
-                            errorMessage = msg
-                        },
-                        scope = scope,
-                        onAuthCancelled = {
-                            isLoading = false
-                        }
-                    )
-                },
-                enabled = !isLoading,
-                shape = RoundedCornerShape(999.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp)
-                    .testTag("google_sign_in_button")
+            Surface(
+                shape = RoundedCornerShape(18.dp),
+                color = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                modifier = Modifier.fillMaxWidth()
             ) {
-                if (isLoading) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(18.dp),
-                        color = MaterialTheme.colorScheme.onPrimary,
-                        strokeWidth = 2.dp
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    OutlinedTextField(
+                        value = ownerCode,
+                        onValueChange = { input ->
+                            val digitsOnly = input.filter { it.isDigit() }.take(6)
+                            ownerCode = digitsOnly
+                            if (errorMessage != null) errorMessage = null
+                        },
+                        label = { Text("6-Digit Owner Code (Optional)") },
+                        placeholder = { Text("Leave blank for direct access") },
+                        leadingIcon = { Icon(Icons.Filled.Key, contentDescription = null) },
+                        trailingIcon = {
+                            IconButton(onClick = { codeVisible = !codeVisible }) {
+                                Icon(
+                                    imageVector = if (codeVisible) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                                    contentDescription = if (codeVisible) "Hide owner code" else "Show owner code"
+                                )
+                            }
+                        },
+                        singleLine = true,
+                        visualTransformation = if (codeVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("owner_code_input")
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Signing in with Google...")
-                } else {
-                    Text(
-                        text = "Continue with Google",
-                        style = MaterialTheme.typography.titleMedium
-                    )
+
+                    Button(
+                        onClick = {
+                            errorMessage = null
+                            isLoading = true
+                            scope.launch {
+                                val err = onDirectLoginSubmit(ownerCode)
+                                isLoading = false
+                                if (!err.isNullOrBlank()) {
+                                    errorMessage = err
+                                }
+                            }
+                        },
+                        enabled = !isLoading,
+                        shape = RoundedCornerShape(999.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(52.dp)
+                            .testTag("direct_login_button")
+                    ) {
+                        if (isLoading) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Entering New Era...")
+                        } else {
+                            Text(
+                                text = if (ownerCode.length == 6) "Unlock Owner & Enter" else "Continue Directly",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                        }
+                    }
                 }
             }
-
-            Text(
-                text = "Sign in with your Google Account to continue. Owner privileges activate automatically for sanskar7775@gmail.com.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center
-            )
         }
     }
 }

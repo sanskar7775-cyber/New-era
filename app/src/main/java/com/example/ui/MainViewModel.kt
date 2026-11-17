@@ -1134,7 +1134,7 @@ class MainViewModel(
             appContext: android.content.Context
         ): ViewModelProvider.Factory = viewModelFactory {
             initializer {
-                val repo = NewEraRepository(context = appContext)
+                val repo = NewEraRepository(context = appContext, localUserId = currentUserId)
                 val crypto = E2eeCryptoManager(appContext)
                 val device = DeviceController(appContext)
                 val web = com.example.web.WebSearchTool()
