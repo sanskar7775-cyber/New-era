@@ -7,7 +7,6 @@ import com.example.data.model.PersonalWebsite
 import com.example.data.model.UserProfile
 import com.example.data.model.VaultBundle
 import com.google.firebase.Firebase
-import com.google.firebase.Timestamp
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
@@ -16,42 +15,21 @@ import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.snapshots
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.tasks.await
 import java.util.UUID
 
 class NewEraRepository(
-    private val db: FirebaseFirestore?,
-    private val isGuestMode: Boolean = false,
-    private val localUserId: String? = null
+    private val db: FirebaseFirestore
 ) {
-    constructor(
-        context: Context,
-        isGuestMode: Boolean = false,
-        useLocalOnly: Boolean = isGuestMode,
-        localUserId: String? = null
-    ) : this(
-        db = if (isGuestMode || useLocalOnly) null else FirebaseFirestore.getInstance(
+    constructor(context: Context) : this(
+        db = FirebaseFirestore.getInstance(
             context.applicationContext.getString(R.string.firestore_database_id)
-        ),
-        isGuestMode = isGuestMode || useLocalOnly,
-        localUserId = localUserId
+        )
     )
 
     private val auth by lazy { Firebase.auth }
-
-    private fun requireDb(): FirebaseFirestore {
-        return db ?: throw IllegalStateException("Firestore instance is unavailable in local/guest mode.")
-    }
-
-    private val guestProfile = MutableStateFlow<UserProfile?>(null)
-    private val guestRecords = MutableStateFlow<List<EncryptedRecord>>(emptyList())
-    private val guestWebsite = MutableStateFlow<PersonalWebsite?>(null)
-    private val guestVaultBundle = MutableStateFlow<VaultBundle?>(null)
-
-    private fun effectiveLocalUid(): String = localUserId?.ifBlank { null } ?: GUEST_USER_ID
 
     private fun requireUserId(): String {
         return auth.currentUser?.uid
@@ -59,8 +37,7 @@ class NewEraRepository(
     }
 
     fun observeUserProfile(userId: String): Flow<UserProfile?> {
-        if (isGuestMode) return guestProfile
-        return requireDb().collection("users").document(userId)
+        return db.collection("users").document(userId)
             .snapshots()
             .map { snapshot ->
                 snapshot.toObject(UserProfile::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
@@ -72,8 +49,7 @@ class NewEraRepository(
     }
 
     fun observeEncryptedRecords(userId: String): Flow<List<EncryptedRecord>> {
-        if (isGuestMode) return guestRecords
-        return requireDb().collection("users").document(userId).collection("encrypted_records")
+        return db.collection("users").document(userId).collection("encrypted_records")
             .snapshots()
             .map { snapshot ->
                 snapshot.toObjects(EncryptedRecord::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
@@ -85,8 +61,7 @@ class NewEraRepository(
     }
 
     fun observeWebsitePage(userId: String): Flow<PersonalWebsite?> {
-        if (isGuestMode) return guestWebsite
-        return requireDb().collection("users").document(userId).collection("website_pages").document(MAIN_SITE_DOC_ID)
+        return db.collection("users").document(userId).collection("website_pages").document(MAIN_SITE_DOC_ID)
             .snapshots()
             .map { snapshot ->
                 snapshot.toObject(PersonalWebsite::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
@@ -98,8 +73,7 @@ class NewEraRepository(
     }
 
     fun observeVaultBundle(userId: String): Flow<VaultBundle?> {
-        if (isGuestMode) return guestVaultBundle
-        return requireDb().collection("users").document(userId).collection("vault_bundles").document(PRIMARY_BUNDLE_DOC_ID)
+        return db.collection("users").document(userId).collection("vault_bundles").document(PRIMARY_BUNDLE_DOC_ID)
             .snapshots()
             .map { snapshot ->
                 snapshot.toObject(VaultBundle::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
@@ -114,41 +88,8 @@ class NewEraRepository(
         keyFingerprint: String,
         defaultWebsiteHtml: String
     ) {
-        if (isGuestMode) {
-            val now = Timestamp.now()
-            if (guestProfile.value == null) {
-                guestProfile.value = UserProfile(
-                    userId = GUEST_USER_ID,
-                    ownerName = "Sanskar (Guest)",
-                    aiName = "New Era",
-                    websiteTitle = "New Era — Sanskar",
-                    websiteTagline = "Owner: Sanskar • Guest Test Hub",
-                    keyFingerprint = keyFingerprint,
-                    voiceReplyEnabled = true,
-                    autoSetupCompleted = true,
-                    createdAt = now,
-                    updatedAt = now
-                )
-            }
-            if (guestWebsite.value == null) {
-                guestWebsite.value = PersonalWebsite(
-                    userId = GUEST_USER_ID,
-                    ownerTag = "Owner: Sanskar",
-                    siteTitle = "New Era — Sanskar",
-                    headline = "Welcome to Sanskar's Personal AI & Command Hub",
-                    bio = "Powered by New Era AI with live internet access, phone & app control, Alexa-style voice interaction, and local AES-256 encryption (Guest Test Mode).",
-                    accentStyle = "cyber_cyan",
-                    showTelemetry = true,
-                    showAiPortal = true,
-                    publishedHtml = defaultWebsiteHtml,
-                    createdAt = now,
-                    updatedAt = now
-                )
-            }
-            return
-        }
         val uid = requireUserId()
-        val userDoc = requireDb().collection("users").document(uid)
+        val userDoc = db.collection("users").document(uid)
         val siteDoc = userDoc.collection("website_pages").document(MAIN_SITE_DOC_ID)
 
         try {
@@ -202,15 +143,8 @@ class NewEraRepository(
     }
 
     suspend fun updateVoiceReplyEnabled(enabled: Boolean) {
-        if (isGuestMode) {
-            guestProfile.value = guestProfile.value?.copy(
-                voiceReplyEnabled = enabled,
-                updatedAt = Timestamp.now()
-            )
-            return
-        }
         val uid = requireUserId()
-        val docRef = requireDb().collection("users").document(uid)
+        val docRef = db.collection("users").document(uid)
         try {
             docRef.update(
                 mapOf(
@@ -227,15 +161,8 @@ class NewEraRepository(
     }
 
     suspend fun updateKeyFingerprint(fingerprint: String) {
-        if (isGuestMode) {
-            guestProfile.value = guestProfile.value?.copy(
-                keyFingerprint = fingerprint,
-                updatedAt = Timestamp.now()
-            )
-            return
-        }
         val uid = requireUserId()
-        val docRef = requireDb().collection("users").document(uid)
+        val docRef = db.collection("users").document(uid)
         try {
             docRef.update(
                 mapOf(
@@ -258,24 +185,8 @@ class NewEraRepository(
         pinned: Boolean = false
     ): String {
         val docId = "rec_${UUID.randomUUID().toString().replace("-", "").take(16)}"
-        if (isGuestMode) {
-            val now = Timestamp.now()
-            val record = EncryptedRecord(
-                id = docId,
-                userId = GUEST_USER_ID,
-                recordType = recordType,
-                ciphertext = ciphertext,
-                iv = iv,
-                keyVersion = 1L,
-                pinned = pinned,
-                createdAt = now,
-                updatedAt = now
-            )
-            guestRecords.value = listOf(record) + guestRecords.value
-            return docId
-        }
         val uid = requireUserId()
-        val docRef = requireDb().collection("users").document(uid).collection("encrypted_records").document(docId)
+        val docRef = db.collection("users").document(uid).collection("encrypted_records").document(docId)
         val payload = mapOf(
             "userId" to uid,
             "recordType" to recordType,
@@ -299,15 +210,8 @@ class NewEraRepository(
 
     suspend fun togglePinRecord(recordId: String, pinned: Boolean) {
         require(recordId.isNotBlank()) { "Record ID must not be blank" }
-        if (isGuestMode) {
-            val now = Timestamp.now()
-            guestRecords.value = guestRecords.value.map {
-                if (it.id == recordId) it.copy(pinned = pinned, updatedAt = now) else it
-            }
-            return
-        }
         val uid = requireUserId()
-        val docRef = requireDb().collection("users").document(uid).collection("encrypted_records").document(recordId)
+        val docRef = db.collection("users").document(uid).collection("encrypted_records").document(recordId)
         try {
             docRef.update(
                 mapOf(
@@ -325,12 +229,8 @@ class NewEraRepository(
 
     suspend fun deleteEncryptedRecord(recordId: String) {
         require(recordId.isNotBlank()) { "Record ID must not be blank" }
-        if (isGuestMode) {
-            guestRecords.value = guestRecords.value.filterNot { it.id == recordId }
-            return
-        }
         val uid = requireUserId()
-        val docRef = requireDb().collection("users").document(uid).collection("encrypted_records").document(recordId)
+        val docRef = db.collection("users").document(uid).collection("encrypted_records").document(recordId)
         try {
             docRef.delete().await()
         } catch (e: CancellationException) {
@@ -342,18 +242,8 @@ class NewEraRepository(
     }
 
     suspend fun saveWebsitePage(website: PersonalWebsite) {
-        if (isGuestMode) {
-            val now = Timestamp.now()
-            guestWebsite.value = website.copy(
-                userId = GUEST_USER_ID,
-                ownerTag = website.ownerTag.ifBlank { "Owner: Sanskar" },
-                createdAt = guestWebsite.value?.createdAt ?: now,
-                updatedAt = now
-            )
-            return
-        }
         val uid = requireUserId()
-        val docRef = requireDb().collection("users").document(uid)
+        val docRef = db.collection("users").document(uid)
             .collection("website_pages").document(MAIN_SITE_DOC_ID)
         try {
             val existing = docRef.get().await()
@@ -400,21 +290,8 @@ class NewEraRepository(
         ivBase64: String,
         keyFingerprint: String
     ) {
-        if (isGuestMode) {
-            val now = Timestamp.now()
-            guestVaultBundle.value = VaultBundle(
-                userId = GUEST_USER_ID,
-                saltBase64 = saltBase64,
-                wrappedKeyBase64 = wrappedKeyBase64,
-                ivBase64 = ivBase64,
-                keyFingerprint = keyFingerprint,
-                createdAt = guestVaultBundle.value?.createdAt ?: now,
-                updatedAt = now
-            )
-            return
-        }
         val uid = requireUserId()
-        val docRef = requireDb().collection("users").document(uid)
+        val docRef = db.collection("users").document(uid)
             .collection("vault_bundles").document(PRIMARY_BUNDLE_DOC_ID)
         try {
             val existing = docRef.get().await()
@@ -450,9 +327,8 @@ class NewEraRepository(
     }
 
     suspend fun getVaultBundleOnce(): VaultBundle? {
-        if (isGuestMode) return guestVaultBundle.value
         val uid = requireUserId()
-        val docRef = requireDb().collection("users").document(uid)
+        val docRef = db.collection("users").document(uid)
             .collection("vault_bundles").document(PRIMARY_BUNDLE_DOC_ID)
         return try {
             docRef.get().await().toObject(VaultBundle::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
@@ -471,11 +347,9 @@ class NewEraRepository(
         summary: String,
         activityCount: Int
     ) {
-        if (isGuestMode) return
         val uid = auth.currentUser?.uid ?: return
-        val firestore = db ?: return
         runCatching {
-            firestore.collection("user_directory").document(uid)
+            db.collection("user_directory").document(uid)
                 .set(
                     mapOf(
                         "userId" to uid,
@@ -487,7 +361,7 @@ class NewEraRepository(
                 ).await()
 
             val actId = "act_${UUID.randomUUID().toString().replace("-", "").take(16)}"
-            firestore.collection("user_activities").document(actId)
+            db.collection("user_activities").document(actId)
                 .set(
                     mapOf(
                         "userId" to uid,
@@ -501,10 +375,8 @@ class NewEraRepository(
     }
 
     suspend fun fetchCloudDirectoryForOwner(): Pair<List<com.example.auth.RegisteredUserRecord>, List<com.example.auth.UserActivityEvent>> {
-        if (isGuestMode) return emptyList<com.example.auth.RegisteredUserRecord>() to emptyList()
-        val firestore = db ?: return emptyList<com.example.auth.RegisteredUserRecord>() to emptyList()
         return try {
-            val usersSnap = firestore.collection("user_directory").get().await()
+            val usersSnap = db.collection("user_directory").get().await()
             val users = usersSnap.documents.mapNotNull { doc ->
                 val uid = doc.getString("userId") ?: doc.id
                 val uname = doc.getString("username") ?: return@mapNotNull null
@@ -520,7 +392,7 @@ class NewEraRepository(
                     activityCount = count
                 )
             }
-            val actSnap = firestore.collection("user_activities").get().await()
+            val actSnap = db.collection("user_activities").get().await()
             val activities = actSnap.documents.mapNotNull { doc ->
                 val uid = doc.getString("userId") ?: return@mapNotNull null
                 val uname = doc.getString("username") ?: return@mapNotNull null
@@ -561,6 +433,5 @@ class NewEraRepository(
     companion object {
         const val MAIN_SITE_DOC_ID = "main_site"
         const val PRIMARY_BUNDLE_DOC_ID = "primary_bundle"
-        const val GUEST_USER_ID = "guest_local_test"
     }
 }

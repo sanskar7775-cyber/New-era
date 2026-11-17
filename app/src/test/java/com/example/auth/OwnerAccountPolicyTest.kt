@@ -16,62 +16,58 @@ import org.robolectric.annotation.Config
 class OwnerAccountPolicyTest {
 
     @Test
-    fun `owner username and password verify accurately`() {
-        assertTrue(OwnerAccountPolicy.verifyOwnerCredentials("legendary", "sanskarisgod"))
-        assertTrue(OwnerAccountPolicy.verifyOwnerCredentials("  Legendary ", "sanskarisgod"))
-        assertFalse(OwnerAccountPolicy.verifyOwnerCredentials("legendary", "wrongpass"))
-        assertFalse(OwnerAccountPolicy.verifyOwnerCredentials("otheruser", "sanskarisgod"))
-        assertFalse(OwnerAccountPolicy.verifyOwnerCredentials("", ""))
-        assertFalse(OwnerAccountPolicy.verifyOwnerCredentials(null, null))
-    }
-
-    @Test
-    fun `authorized owner emails still match owner cloud privileges`() {
+    fun `authorized owner google account grants owner power to sanskar7775`() {
         assertTrue(OwnerAccountPolicy.isAuthorizedOwnerEmail("sanskar7775@gmail.com"))
+        assertTrue(OwnerAccountPolicy.isAuthorizedOwnerEmail("  SANSKAR7775@GMAIL.COM "))
         assertTrue(OwnerAccountPolicy.isAuthorizedOwnerEmail("sanskarghogare076@gmail.com"))
         assertFalse(OwnerAccountPolicy.isAuthorizedOwnerEmail("alice@gmail.com"))
+        assertFalse(OwnerAccountPolicy.isAuthorizedOwnerEmail(""))
+        assertFalse(OwnerAccountPolicy.isAuthorizedOwnerEmail(null))
     }
 
     @Test
-    fun `username and password supports open user registration, owner monitor directory, and activity tracking`() = runBlocking {
+    fun `google user sessions track owner status, user directory, and activity feed`() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val manager = UserSessionManager(context)
         manager.signOutSession()
 
-        // 1. Register & sign in standard user "alice"
-        val aliceRes = manager.signInOrRegisterWithCredentials("alice", "pass1234")
-        assertTrue(aliceRes is AuthAttemptResult.Success)
-        val aliceSession = (aliceRes as AuthAttemptResult.Success).session
-        assertEquals("alice", aliceSession.username)
+        // 1. Standard Google user signs in
+        val aliceSession = manager.activateGoogleUserSession(
+            uid = "uid_alice_1",
+            email = "alice@gmail.com",
+            displayName = "Alice"
+        )
+        assertTrue(aliceSession.isSignedIn)
+        assertEquals("google", aliceSession.authMethod)
+        assertEquals("Alice", aliceSession.username)
         assertFalse(aliceSession.isOwner)
 
-        // 2. Wrong password on subsequent login is rejected
-        val badRes = manager.signInOrRegisterWithCredentials("alice", "wrongpass")
-        assertTrue(badRes is AuthAttemptResult.Error)
-
-        // 3. Record user activity for "alice"
+        // 2. Record user activity for Alice
         manager.recordUserActivity(
             uid = aliceSession.uid,
             username = aliceSession.username,
             actionType = "IMAGE_STUDIO",
             summary = "Generated portrait",
-            authMethod = "password",
+            authMethod = "google",
             isOwner = false
         )
 
-        // 4. Owner signs in with "legendary" / "sanskarisgod"
-        val ownerRes = manager.signInOrRegisterWithCredentials("legendary", "sanskarisgod")
-        assertTrue(ownerRes is AuthAttemptResult.Success)
-        val ownerSession = (ownerRes as AuthAttemptResult.Success).session
+        // 3. Owner Google account (sanskar7775@gmail.com) signs in with Owner powers
+        val ownerSession = manager.activateGoogleUserSession(
+            uid = "uid_owner_sanskar",
+            email = "sanskar7775@gmail.com",
+            displayName = "Sanskar"
+        )
+        assertTrue(ownerSession.isSignedIn)
+        assertEquals("google", ownerSession.authMethod)
         assertTrue(ownerSession.isOwner)
-        assertEquals("legendary", ownerSession.username)
 
-        // 5. Verify Owner Directory Snapshot exposes user count, usernames, and activities
+        // 4. Verify Owner Directory Snapshot tracks users, emails, and activity events
         val directory = manager.getDirectory()
         assertTrue(directory.totalUsers >= 2)
-        val usernames = directory.users.map { it.username }
-        assertTrue("alice" in usernames)
-        assertTrue("legendary" in usernames)
-        assertTrue(directory.activities.any { it.username == "alice" && it.actionType == "IMAGE_STUDIO" })
+        val ownerRecord = directory.users.firstOrNull { it.uid == "uid_owner_sanskar" }
+        assertTrue(ownerRecord?.isOwner == true)
+        assertEquals("sanskar7775@gmail.com", ownerRecord?.email)
+        assertTrue(directory.activities.any { it.username == "Alice" && it.actionType == "IMAGE_STUDIO" })
     }
 }

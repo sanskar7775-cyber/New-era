@@ -14,6 +14,7 @@ import com.example.googleapps.GoogleAppIntegration
 import com.example.googleapps.GoogleWorkspaceClient
 import com.example.web.WebSearchTool
 import com.google.firebase.Firebase
+import com.google.firebase.ai.Chat
 import com.google.firebase.ai.GenerativeModel
 import com.google.firebase.ai.ai
 import com.google.firebase.ai.type.AspectRatio
@@ -160,10 +161,20 @@ class NewEraAiService(
     }
 
     @Volatile
-    private var chatSession = assistantModel.startChat()
+    private var chatSession: Chat? = null
+
+    private fun getOrCreateChatSession(): Chat {
+        val existing = chatSession
+        if (existing != null) return existing
+        return synchronized(this) {
+            chatSession ?: assistantModel.startChat().also { chatSession = it }
+        }
+    }
 
     fun resetChatSession() {
-        chatSession = assistantModel.startChat()
+        synchronized(this) {
+            chatSession = null
+        }
     }
 
     private val system2Engine = System2ReasoningEngine()
@@ -309,15 +320,16 @@ class NewEraAiService(
                     }
                 }
 
+                val activeChat = getOrCreateChatSession()
                 var response = if (attachedImage != null) {
-                    chatSession.sendMessage(
+                    activeChat.sendMessage(
                         content {
                             image(attachedImage)
                             text(effectiveInput)
                         }
                     )
                 } else {
-                    chatSession.sendMessage(effectiveInput)
+                    activeChat.sendMessage(effectiveInput)
                 }
 
                 // Multi-step Autonomous Agent Loop (up to 8 chained steps with fault-tolerant recovery)
@@ -334,7 +346,7 @@ class NewEraAiService(
                         } ?: FunctionResponsePart(call.name, toolOutputJson)
                         responseParts.add(part)
                     }
-                    response = chatSession.sendMessage(
+                    response = activeChat.sendMessage(
                         content(role = "function") {
                             for (p in responseParts) {
                                 part(p)

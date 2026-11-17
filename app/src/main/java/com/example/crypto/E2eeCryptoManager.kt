@@ -142,7 +142,11 @@ class E2eeCryptoManager(private val appContext: Context) {
     }
 
     private fun deriveKeyFromPassphrase(passphrase: String, salt: ByteArray): SecretKey {
-        val factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
+        val factory = try {
+            SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
+        } catch (_: Exception) {
+            SecretKeyFactory.getInstance("PBKDF2WithHmacSHA1")
+        }
         val spec = PBEKeySpec(passphrase.toCharArray(), salt, 100_000, 256)
         val keyBytes = factory.generateSecret(spec).encoded
         return SecretKeySpec(keyBytes, "AES")

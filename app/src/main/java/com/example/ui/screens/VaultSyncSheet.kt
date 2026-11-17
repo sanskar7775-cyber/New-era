@@ -54,7 +54,6 @@ fun VaultSyncSheet(
     keyFingerprint: String,
     hasCloudBundle: Boolean,
     needsPassphraseUnlock: Boolean,
-    isGuestMode: Boolean = false,
     recoveryKeyProvider: () -> String,
     onSetPassphrase: (String) -> Unit,
     onUnlockPassphrase: (String) -> Unit,
@@ -110,31 +109,6 @@ fun VaultSyncSheet(
                     }
                 }
                 OwnerSanskarTag()
-            }
-
-            if (isGuestMode) {
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = MaterialTheme.colorScheme.secondaryContainer,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.6f)),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(
-                        modifier = Modifier.padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Text(
-                            text = "Guest Test Mode Active",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.secondary
-                        )
-                        Text(
-                            text = "Records and website edits are encrypted locally for testing and stay on this session only. Sign in with Google below whenever you want real-time cloud sync across devices.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer
-                        )
-                    }
-                }
             }
 
             Surface(
@@ -276,11 +250,11 @@ fun VaultSyncSheet(
                     OutlinedButton(
                         onClick = {
                             val mailIntent = Intent(Intent.ACTION_SENDTO).apply {
-                                data = Uri.parse("mailto:sanskarghogare076@gmail.com")
+                                data = Uri.parse("mailto:sanskar7775@gmail.com")
                                 putExtra(Intent.EXTRA_SUBJECT, "New Era AI — Setup & E2EE Sync Info (Owner: Sanskar)")
                                 putExtra(
                                     Intent.EXTRA_TEXT,
-                                    "New Era AI Setup Summary\nOwner: Sanskar\nE2EE Key Fingerprint: $keyFingerprint\nLocal Portal URL: http://127.0.0.1:8787\n\nDownload your APK from AI Studio Settings > Export / Generate APK."
+                                    "New Era AI Setup Summary\nOwner: sanskar7775@gmail.com\nE2EE Key Fingerprint: $keyFingerprint\nLocal Portal URL: http://127.0.0.1:8787"
                                 )
                             }
                             runCatching { context.startActivity(Intent.createChooser(mailIntent, "Email Setup Summary")) }
@@ -291,7 +265,7 @@ fun VaultSyncSheet(
                     ) {
                         Icon(Icons.Filled.Email, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Email Setup to sanskarghogare076@gmail.com")
+                        Text("Email Setup to sanskar7775@gmail.com")
                     }
                 }
             }
@@ -301,8 +275,8 @@ fun VaultSyncSheet(
             Button(
                 onClick = onSignOut,
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isGuestMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
-                    contentColor = if (isGuestMode) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onError
+                    containerColor = MaterialTheme.colorScheme.error,
+                    contentColor = MaterialTheme.colorScheme.onError
                 ),
                 modifier = Modifier
                     .fillMaxWidth()
@@ -311,7 +285,7 @@ fun VaultSyncSheet(
             ) {
                 Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
-                Text(if (isGuestMode) "Exit Guest & Sign In with Google" else "Sign Out")
+                Text("Sign Out")
             }
         }
     }

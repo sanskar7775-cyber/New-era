@@ -98,8 +98,7 @@ class MainViewModel(
     private val currentUserId: String,
     private val currentUsername: String,
     val isOwnerSession: Boolean,
-    private val authMethod: String,
-    val isGuestMode: Boolean = false,
+    private val authMethod: String = "google",
     private val repository: NewEraRepository,
     private val cryptoManager: E2eeCryptoManager,
     private val aiService: NewEraAiService,
@@ -1132,17 +1131,10 @@ class MainViewModel(
             currentUsername: String = "Sanskar",
             isOwnerSession: Boolean = false,
             authMethod: String = "google",
-            appContext: android.content.Context,
-            isGuestMode: Boolean = false,
-            useLocalPersistence: Boolean = isGuestMode
+            appContext: android.content.Context
         ): ViewModelProvider.Factory = viewModelFactory {
             initializer {
-                val repo = NewEraRepository(
-                    context = appContext,
-                    isGuestMode = isGuestMode,
-                    useLocalOnly = useLocalPersistence,
-                    localUserId = currentUserId
-                )
+                val repo = NewEraRepository(context = appContext)
                 val crypto = E2eeCryptoManager(appContext)
                 val device = DeviceController(appContext)
                 val web = com.example.web.WebSearchTool()
@@ -1157,7 +1149,7 @@ class MainViewModel(
                 val userSessionManager = UserSessionManager(appContext)
                 val learningStore = DailyLearningStore(appContext)
                 val learningEngine = DailyLearningEngine(learningStore, web, ai)
-                DailyLearningWorker.scheduleDaily(appContext)
+                runCatching { DailyLearningWorker.scheduleDaily(appContext) }
                 val voice = AlexaVoiceEngine(appContext)
                 val server = PersonalWebsiteServer()
                 MainViewModel(
@@ -1165,7 +1157,6 @@ class MainViewModel(
                     currentUsername = currentUsername,
                     isOwnerSession = isOwnerSession,
                     authMethod = authMethod,
-                    isGuestMode = isGuestMode,
                     repository = repo,
                     cryptoManager = crypto,
                     aiService = ai,

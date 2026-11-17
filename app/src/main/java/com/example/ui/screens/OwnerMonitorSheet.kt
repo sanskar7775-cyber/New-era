@@ -94,7 +94,7 @@ fun OwnerMonitorSheet(
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
-                            text = "Owner: legendary • Live Usernames & Activity Feed",
+                            text = "Owner: sanskar7775@gmail.com • Live Google Users & Activity",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -258,13 +258,14 @@ private fun UserDirectoryRowCard(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "@${user.username}" + if (user.isOwner) " (Owner)" else "",
+                    text = user.username + if (user.isOwner) " (Owner)" else "",
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 val ts = if (user.lastActiveMillis > 0L) dateFormat.format(Date(user.lastActiveMillis)) else "Just now"
+                val identityDetail = if (user.email.isNotBlank()) "${user.email} • " else ""
                 Text(
-                    text = "${user.authMethod} • Last seen $ts",
+                    text = "${identityDetail}${user.authMethod} • Last seen $ts",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

@@ -71,8 +71,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import com.example.auth.AuthAttemptResult
-import com.example.auth.AuthSession
+import com.example.auth.OwnerAccountPolicy
 import com.example.auth.UserSessionManager
 import com.example.auth.authStateFlow
 import com.example.auth.signOut
@@ -152,47 +151,41 @@ fun AppNavigation(auth: FirebaseAuth? = null) {
             if (FirebaseApp.getApps(context).isNotEmpty()) Firebase.auth else null
         }.getOrNull()
     }
-    val activeSession by sessionManager.sessionFlow.collectAsStateWithLifecycle(initialValue = AuthSession())
+    val activeSession by sessionManager.sessionFlow.collectAsStateWithLifecycle(initialValue = null)
     val firebaseUser by remember(resolvedAuth) {
         resolvedAuth?.authStateFlow() ?: flowOf(null)
     }.collectAsStateWithLifecycle(initialValue = resolvedAuth?.currentUser)
 
-    // Keep DataStore session synchronized if Firebase Google user is already signed in
-    LaunchedEffect(firebaseUser?.uid) {
+    // Keep DataStore directory & owner status synchronized for authenticated Google users
+    LaunchedEffect(firebaseUser?.uid, firebaseUser?.email) {
         val fb = firebaseUser
-        if (fb != null && (!activeSession.isSignedIn || activeSession.uid != fb.uid)) {
+        if (fb != null && (activeSession?.uid != fb.uid || activeSession?.authMethod != "google")) {
             sessionManager.activateGoogleUserSession(fb.uid, fb.email, fb.displayName)
         }
     }
 
-    if (activeSession.isSignedIn && activeSession.uid.isNotBlank()) {
-        val useLocalPersistence = activeSession.authMethod != "google" || firebaseUser == null
-        key(activeSession.uid) {
+    val signedInUser = firebaseUser
+    if (signedInUser != null) {
+        val resolvedName = signedInUser.displayName?.trim()?.takeIf { it.isNotBlank() }
+            ?: signedInUser.email?.substringBefore("@")?.takeIf { it.isNotBlank() }
+            ?: "User"
+        val isOwnerSession = OwnerAccountPolicy.isAuthorizedOwnerEmail(signedInUser.email)
+        key(signedInUser.uid) {
             NewEraMainShell(
-                currentUserId = activeSession.uid,
-                currentUsername = activeSession.username.ifBlank { "User" },
-                isOwnerSession = activeSession.isOwner,
-                authMethod = activeSession.authMethod,
-                isGuestMode = activeSession.isGuestMode,
-                useLocalPersistence = useLocalPersistence,
+                currentUserId = signedInUser.uid,
+                currentUsername = resolvedName,
+                currentUserEmail = signedInUser.email.orEmpty(),
+                isOwnerSession = isOwnerSession,
                 onSignOutComplete = {
                     scope.launch {
                         sessionManager.signOutSession()
-                        if (firebaseUser != null) {
-                            signOut(credentialManager, scope)
-                        }
+                        signOut(credentialManager, scope)
                     }
                 }
             )
         }
     } else {
         AuthScreen(
-            onCredentialsSubmit = { username, password ->
-                when (val result = sessionManager.signInOrRegisterWithCredentials(username, password)) {
-                    is AuthAttemptResult.Success -> null
-                    is AuthAttemptResult.Error -> result.message
-                }
-            },
             onGoogleAuthSuccess = { fbUser ->
                 scope.launch {
                     sessionManager.activateGoogleUserSession(
@@ -200,11 +193,6 @@ fun AppNavigation(auth: FirebaseAuth? = null) {
                         email = fbUser.email,
                         displayName = fbUser.displayName
                     )
-                }
-            },
-            onGuestSignIn = {
-                scope.launch {
-                    sessionManager.activateGuestSession()
                 }
             }
         )
@@ -216,24 +204,19 @@ fun AppNavigation(auth: FirebaseAuth? = null) {
 fun NewEraMainShell(
     currentUserId: String,
     currentUsername: String = "Sanskar",
+    currentUserEmail: String = "",
     isOwnerSession: Boolean = false,
-    authMethod: String = "google",
-    isGuestMode: Boolean = false,
-    useLocalPersistence: Boolean = isGuestMode,
     onSignOutComplete: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val appContext = remember(context) { context.applicationContext }
     val viewModel: MainViewModel = viewModel(
-        key = "${currentUserId}_${authMethod}_guest_$isGuestMode",
+        key = "google_${currentUserId}",
         factory = MainViewModel.provideFactory(
             currentUserId = currentUserId,
             currentUsername = currentUsername,
             isOwnerSession = isOwnerSession,
-            authMethod = authMethod,
-            appContext = appContext,
-            isGuestMode = isGuestMode,
-            useLocalPersistence = useLocalPersistence
+            appContext = appContext
         )
     )
 
@@ -344,9 +327,10 @@ fun NewEraMainShell(
                                 )
                                 Text(
                                     text = if (isOwnerSession) {
-                                        "@$currentUsername • Owner"
+                                        val label = currentUserEmail.ifBlank { currentUsername }
+                                        "$label • Owner"
                                     } else {
-                                        "@$currentUsername"
+                                        currentUserEmail.ifBlank { currentUsername }
                                     },
                                     style = MaterialTheme.typography.labelSmall,
                                     color = if (isOwnerSession) {
@@ -380,14 +364,13 @@ fun NewEraMainShell(
                                     )
                                     Spacer(modifier = Modifier.width(4.dp))
                                     Text(
-                                        text = "Users (${userDirectoryState.totalUsers})",
+                                        text = "Owner (${userDirectoryState.totalUsers})",
                                         style = MaterialTheme.typography.labelMedium
                                     )
                                 }
                             }
                             E2eeShieldBadge(
                                 fingerprint = keyFingerprint,
-                                isGuestMode = isGuestMode,
                                 onClick = { showVaultSheet = true }
                             )
                         }
@@ -636,7 +619,6 @@ fun NewEraMainShell(
             keyFingerprint = keyFingerprint,
             hasCloudBundle = vaultBundle != null,
             needsPassphraseUnlock = needsPassphraseUnlock,
-            isGuestMode = isGuestMode,
             recoveryKeyProvider = { viewModel.exportCurrentRecoveryKey() },
             onSetPassphrase = { viewModel.setSyncPassphrase(it) },
             onUnlockPassphrase = { viewModel.unlockWithPassphrase(it) },

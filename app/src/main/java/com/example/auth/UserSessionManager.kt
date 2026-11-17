@@ -11,11 +11,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import org.json.JSONArray
 import org.json.JSONObject
-import java.security.SecureRandom
-import java.util.Locale
 import java.util.UUID
-import javax.crypto.SecretKeyFactory
-import javax.crypto.spec.PBEKeySpec
 
 private val Context.userSessionDataStore: DataStore<Preferences> by preferencesDataStore(
     name = "new_era_user_sessions"
@@ -27,16 +23,13 @@ data class AuthSession(
     val username: String = "",
     val email: String = "",
     val isOwner: Boolean = false,
-    val authMethod: String = "none", // "owner_password", "password", "google", "guest"
-    val isGuestMode: Boolean = false
+    val authMethod: String = "none" // "google" or "none"
 )
 
 data class RegisteredUserRecord(
     val uid: String,
     val username: String,
-    val passwordSaltHex: String = "",
-    val passwordHashHex: String = "",
-    val authMethod: String = "password",
+    val authMethod: String = "google",
     val email: String = "",
     val isOwner: Boolean = false,
     val createdAtMillis: Long = System.currentTimeMillis(),
@@ -61,15 +54,9 @@ data class UserDirectorySnapshot(
         get() = users.size
 }
 
-sealed interface AuthAttemptResult {
-    data class Success(val session: AuthSession, val isNewAccount: Boolean) : AuthAttemptResult
-    data class Error(val message: String) : AuthAttemptResult
-}
-
 class UserSessionManager(private val context: Context) {
 
     private val appContext = context.applicationContext
-    private val secureRandom = SecureRandom()
 
     val sessionFlow: Flow<AuthSession> = appContext.userSessionDataStore.data.map { prefs ->
         val raw = prefs[KEY_ACTIVE_SESSION]
@@ -87,117 +74,6 @@ class UserSessionManager(private val context: Context) {
 
     suspend fun getDirectory(): UserDirectorySnapshot = directoryFlow.first()
 
-    suspend fun signInOrRegisterWithCredentials(
-        rawUsername: String,
-        rawPassword: String
-    ): AuthAttemptResult {
-        val username = rawUsername.trim()
-        val password = rawPassword
-        if (username.length < 3) {
-            return AuthAttemptResult.Error("Username must be at least 3 characters.")
-        }
-        if (password.length < 4) {
-            return AuthAttemptResult.Error("Password must be at least 4 characters.")
-        }
-
-        // Check official Owner credentials ("legendary" / "sanskarisgod")
-        if (OwnerAccountPolicy.isReservedOwnerUsername(username)) {
-            if (!OwnerAccountPolicy.verifyOwnerCredentials(username, password)) {
-                return AuthAttemptResult.Error("Incorrect password for owner account.")
-            }
-            val ownerSession = AuthSession(
-                isSignedIn = true,
-                uid = OwnerAccountPolicy.OWNER_UID,
-                username = OwnerAccountPolicy.OWNER_USERNAME,
-                isOwner = true,
-                authMethod = "owner_password",
-                isGuestMode = false
-            )
-            saveActiveSession(ownerSession)
-            upsertUserAndLogActivity(
-                uid = ownerSession.uid,
-                username = ownerSession.username,
-                authMethod = "owner_password",
-                isOwner = true,
-                actionType = "OWNER_LOGIN",
-                summary = "Owner signed in via username & password"
-            )
-            return AuthAttemptResult.Success(ownerSession, isNewAccount = false)
-        }
-
-        // Standard user sign-in or registration
-        val normUsername = username.lowercase(Locale.US)
-        val snapshot = getDirectory()
-        val existing = snapshot.users.firstOrNull {
-            it.username.lowercase(Locale.US) == normUsername && it.authMethod == "password"
-        }
-
-        return if (existing != null) {
-            val computed = hashPassword(password, existing.passwordSaltHex)
-            if (!constantTimeEquals(computed, existing.passwordHashHex)) {
-                AuthAttemptResult.Error("Incorrect password for user '$username'.")
-            } else {
-                val session = AuthSession(
-                    isSignedIn = true,
-                    uid = existing.uid,
-                    username = existing.username,
-                    isOwner = false,
-                    authMethod = "password",
-                    isGuestMode = false
-                )
-                saveActiveSession(session)
-                upsertUserAndLogActivity(
-                    uid = session.uid,
-                    username = session.username,
-                    authMethod = "password",
-                    isOwner = false,
-                    actionType = "USER_LOGIN",
-                    summary = "Signed in with username & password"
-                )
-                AuthAttemptResult.Success(session, isNewAccount = false)
-            }
-        } else {
-            val uid = "usr_${UUID.randomUUID().toString().replace("-", "").take(12)}"
-            val saltBytes = ByteArray(16)
-            secureRandom.nextBytes(saltBytes)
-            val saltHex = saltBytes.joinToString("") { "%02x".format(it) }
-            val passHash = hashPassword(password, saltHex)
-            val now = System.currentTimeMillis()
-            val newUser = RegisteredUserRecord(
-                uid = uid,
-                username = username,
-                passwordSaltHex = saltHex,
-                passwordHashHex = passHash,
-                authMethod = "password",
-                isOwner = false,
-                createdAtMillis = now,
-                lastActiveMillis = now,
-                activityCount = 0
-            )
-            saveDirectory(
-                snapshot.copy(users = listOf(newUser) + snapshot.users)
-            )
-            val session = AuthSession(
-                isSignedIn = true,
-                uid = uid,
-                username = username,
-                isOwner = false,
-                authMethod = "password",
-                isGuestMode = false
-            )
-            saveActiveSession(session)
-            upsertUserAndLogActivity(
-                uid = uid,
-                username = username,
-                authMethod = "password",
-                isOwner = false,
-                actionType = "ACCOUNT_CREATED",
-                summary = "Created new user account '$username'"
-            )
-            AuthAttemptResult.Success(session, isNewAccount = true)
-        }
-    }
-
     suspend fun activateGoogleUserSession(
         uid: String,
         email: String?,
@@ -210,11 +86,10 @@ class UserSessionManager(private val context: Context) {
         val session = AuthSession(
             isSignedIn = true,
             uid = uid,
-            username = if (isGoogleOwner) "${OwnerAccountPolicy.OWNER_USERNAME} ($derivedUsername)" else derivedUsername,
+            username = derivedUsername,
             email = cleanEmail,
             isOwner = isGoogleOwner,
-            authMethod = "google",
-            isGuestMode = false
+            authMethod = "google"
         )
         saveActiveSession(session)
         upsertUserAndLogActivity(
@@ -229,33 +104,12 @@ class UserSessionManager(private val context: Context) {
         return session
     }
 
-    suspend fun activateGuestSession(): AuthSession {
-        val session = AuthSession(
-            isSignedIn = true,
-            uid = "guest_local_test",
-            username = "guest_preview",
-            isOwner = false,
-            authMethod = "guest",
-            isGuestMode = true
-        )
-        saveActiveSession(session)
-        upsertUserAndLogActivity(
-            uid = session.uid,
-            username = session.username,
-            authMethod = "guest",
-            isOwner = false,
-            actionType = "GUEST_PREVIEW",
-            summary = "Opened Local Offline Preview"
-        )
-        return session
-    }
-
     suspend fun recordUserActivity(
         uid: String,
         username: String,
         actionType: String,
         summary: String,
-        authMethod: String = "session",
+        authMethod: String = "google",
         isOwner: Boolean = false
     ) {
         if (uid.isBlank() || username.isBlank()) return
@@ -279,10 +133,7 @@ class UserSessionManager(private val context: Context) {
         cloudUsers.forEach { cloud ->
             val existing = usersByKey[cloud.uid]
             if (existing == null || cloud.lastActiveMillis > existing.lastActiveMillis) {
-                usersByKey[cloud.uid] = cloud.copy(
-                    passwordSaltHex = existing?.passwordSaltHex.orEmpty(),
-                    passwordHashHex = existing?.passwordHashHex.orEmpty()
-                )
+                usersByKey[cloud.uid] = cloud
             }
         }
         val actMap = LinkedHashMap<String, UserActivityEvent>()
@@ -372,23 +223,6 @@ class UserSessionManager(private val context: Context) {
         }
     }
 
-    private fun hashPassword(password: String, saltHex: String): String {
-        val salt = saltHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
-        val spec = PBEKeySpec(password.toCharArray(), salt, 30_000, 256)
-        val derived = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
-            .generateSecret(spec).encoded
-        return derived.joinToString("") { "%02x".format(it) }
-    }
-
-    private fun constantTimeEquals(a: String, b: String): Boolean {
-        if (a.length != b.length) return false
-        var diff = 0
-        for (i in a.indices) {
-            diff = diff or (a[i].code xor b[i].code)
-        }
-        return diff == 0
-    }
-
     private fun encodeSession(s: AuthSession): String {
         return JSONObject().apply {
             put("isSignedIn", s.isSignedIn)
@@ -397,20 +231,20 @@ class UserSessionManager(private val context: Context) {
             put("email", s.email)
             put("isOwner", s.isOwner)
             put("authMethod", s.authMethod)
-            put("isGuestMode", s.isGuestMode)
         }.toString()
     }
 
     private fun decodeSession(raw: String): AuthSession {
         val o = JSONObject(raw)
+        val method = o.optString("authMethod", "none")
+        if (method != "google") return AuthSession()
         return AuthSession(
             isSignedIn = o.optBoolean("isSignedIn", false),
             uid = o.optString("uid", ""),
             username = o.optString("username", ""),
             email = o.optString("email", ""),
             isOwner = o.optBoolean("isOwner", false),
-            authMethod = o.optString("authMethod", "none"),
-            isGuestMode = o.optBoolean("isGuestMode", false)
+            authMethod = method
         )
     }
 
@@ -420,8 +254,6 @@ class UserSessionManager(private val context: Context) {
                 put(JSONObject().apply {
                     put("uid", u.uid)
                     put("username", u.username)
-                    put("salt", u.passwordSaltHex)
-                    put("hash", u.passwordHashHex)
                     put("authMethod", u.authMethod)
                     put("email", u.email)
                     put("isOwner", u.isOwner)
@@ -457,9 +289,7 @@ class UserSessionManager(private val context: Context) {
             RegisteredUserRecord(
                 uid = o.optString("uid"),
                 username = o.optString("username"),
-                passwordSaltHex = o.optString("salt"),
-                passwordHashHex = o.optString("hash"),
-                authMethod = o.optString("authMethod", "password"),
+                authMethod = o.optString("authMethod", "google"),
                 email = o.optString("email", ""),
                 isOwner = o.optBoolean("isOwner", false),
                 createdAtMillis = o.optLong("createdAtMillis", 0L),

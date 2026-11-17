@@ -22,7 +22,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.PersonOutline
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -93,7 +92,6 @@ fun OwnerSanskarTag(
 fun E2eeShieldBadge(
     fingerprint: String,
     onClick: () -> Unit,
-    isGuestMode: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     Surface(
@@ -103,11 +101,7 @@ fun E2eeShieldBadge(
             .clickable(onClick = onClick)
             .testTag("e2ee_shield_button"),
         shape = RoundedCornerShape(999.dp),
-        color = if (isGuestMode) {
-            MaterialTheme.colorScheme.secondaryContainer
-        } else {
-            MaterialTheme.colorScheme.primaryContainer
-        },
+        color = MaterialTheme.colorScheme.primaryContainer,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
     ) {
         Row(
@@ -116,17 +110,13 @@ fun E2eeShieldBadge(
             horizontalArrangement = Arrangement.spacedBy(5.dp)
         ) {
             Icon(
-                imageVector = if (isGuestMode) Icons.Filled.PersonOutline else Icons.Filled.Lock,
-                contentDescription = if (isGuestMode) "Local preview mode" else "End-to-end encrypted vault",
+                imageVector = Icons.Filled.Lock,
+                contentDescription = "End-to-end encrypted vault",
                 tint = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.size(14.dp)
             )
             Text(
-                text = when {
-                    isGuestMode -> "Local"
-                    fingerprint.isNotBlank() -> "E2EE ${fingerprint.take(4)}"
-                    else -> "E2EE"
-                },
+                text = if (fingerprint.isNotBlank()) "E2EE ${fingerprint.take(4)}" else "E2EE",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurface
             )

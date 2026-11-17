@@ -102,7 +102,7 @@ fun onGoogleSignInClicked(
     onAuthCancelled: () -> Unit = {}
 ) {
     val clientId = resolveWebClientId(context) ?: run {
-        onAuthError("Google Sign-In requires google-services.json configuration (default_web_client_id not found). Use Username/Password or Local Offline Preview.")
+        onAuthError("Google Sign-In requires google-services.json configuration (default_web_client_id not found). Add app/google-services.json or set GOOGLE_SERVICES_JSON in GitHub Secrets.")
         return
     }
 
